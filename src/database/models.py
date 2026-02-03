@@ -116,7 +116,11 @@ class Trade(Base):
     take_profit_2 = Column(Numeric(12, 5), nullable=True)  # Second target (e.g., 1:2)
     take_profit_final = Column(Numeric(12, 5), nullable=True)  # Final target
     trailing_stop = Column(Numeric(12, 5), nullable=True)
-    
+
+    # Position state for MTFTR strategy
+    position_state = Column(String(20), default="initial", nullable=False)
+    # States: "initial" → "tp1_hit" → "tp2_hit" → "trailing"
+
     # Exit details
     exit_price = Column(Numeric(12, 5), nullable=True)
     exit_time = Column(DateTime(timezone=True), nullable=True)

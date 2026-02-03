@@ -105,12 +105,57 @@ class Settings(BaseSettings):
     atr_multiplier: float = Field(default=1.5, ge=1.0, le=3.0)
     
     # Session Filtering (GMT times as strings)
-    london_session_start: str = "08:00"
-    london_session_end: str = "16:00"
+    london_session_start: str = "07:00"
+    london_session_end: str = "12:00"
     ny_session_start: str = "13:00"
-    ny_session_end: str = "21:00"
+    ny_session_end: str = "16:00"
     trade_sessions: str = "london,newyork"
-    
+
+    # -------------------------------------------------------------------------
+    # MTFTR Strategy Configuration
+    # -------------------------------------------------------------------------
+    # Strategy enable/disable
+    mtftr_enabled: bool = True
+
+    # Indicator periods
+    mtftr_ema_200: int = Field(default=200, ge=50, le=400)
+    mtftr_ema_50: int = Field(default=50, ge=20, le=100)
+    mtftr_ema_21: int = Field(default=21, ge=10, le=50)
+    mtftr_hull_55: int = Field(default=55, ge=20, le=100)
+    mtftr_hull_34: int = Field(default=34, ge=10, le=60)
+    mtftr_rsi_period: int = Field(default=14, ge=5, le=30)
+    mtftr_atr_period: int = Field(default=14, ge=5, le=30)
+    mtftr_swing_lookback: int = Field(default=5, ge=3, le=10)
+
+    # Risk/Reward ratios
+    mtftr_tp1_rr: float = Field(default=1.0, ge=0.5, le=2.0, description="TP1 risk:reward")
+    mtftr_tp2_rr: float = Field(default=2.0, ge=1.0, le=5.0, description="TP2 risk:reward")
+
+    # Scaled exit percentages
+    mtftr_tp1_close_percent: float = Field(default=0.50, ge=0.3, le=0.7, description="Close 50% at TP1")
+    mtftr_tp2_close_percent: float = Field(default=0.30, ge=0.2, le=0.5, description="Close 30% at TP2")
+    mtftr_trail_percent: float = Field(default=0.20, ge=0.1, le=0.5, description="Trail 20%")
+
+    # Entry filters
+    mtftr_min_rsi_long: float = Field(default=40.0, ge=20.0, le=50.0)
+    mtftr_max_rsi_long: float = Field(default=55.0, ge=50.0, le=70.0)
+    mtftr_min_rsi_short: float = Field(default=45.0, ge=30.0, le=55.0)
+    mtftr_max_rsi_short: float = Field(default=60.0, ge=50.0, le=80.0)
+
+    # Stop loss limits (in ATR multiples)
+    mtftr_min_sl_atr: float = Field(default=1.0, ge=0.5, le=2.0)
+    mtftr_max_sl_atr: float = Field(default=3.0, ge=2.0, le=5.0)
+    mtftr_sl_buffer_atr: float = Field(default=0.5, ge=0.2, le=1.0)
+
+    # Position limits
+    max_open_positions: int = Field(default=2, ge=1, le=5, description="Max concurrent positions")
+    max_daily_trades: int = Field(default=3, ge=1, le=10, description="Max trades per day")
+    mtftr_max_trade_hours: int = Field(default=8, ge=4, le=24, description="Max hours per trade")
+
+    # Risk limits
+    max_daily_loss_percent: float = Field(default=0.03, ge=0.01, le=0.10, description="Max 3% daily loss")
+    min_margin_level: float = Field(default=200.0, ge=100.0, le=500.0, description="Min margin level %")
+
     # -------------------------------------------------------------------------
     # Database Configuration
     # -------------------------------------------------------------------------
