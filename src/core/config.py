@@ -44,7 +44,7 @@ class Settings(BaseSettings):
     # -------------------------------------------------------------------------
     # Application Settings
     # -------------------------------------------------------------------------
-    app_name: str = "TradingAutomation"
+    app_name: str = "AegisAutomatedTradingSystem"
     app_env: Environment = Environment.DEVELOPMENT
     debug: bool = False
     log_level: str = "INFO"
