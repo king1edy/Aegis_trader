@@ -17,7 +17,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 from decimal import Decimal
 
-from src.execution.mt5_connector import BrokerInterface, OrderType, OrderDirection
+from src.execution.mt5_connector import BrokerInterface, OrderDirection
 from src.database.repository import TradeRepository, get_session
 from src.database.models import Trade, TradeStatus, PartialClose, TradeModification, OrderType as DBOrderType
 from src.strategies.data_manager import MultiTimeframeDataManager

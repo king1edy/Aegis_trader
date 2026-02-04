@@ -19,7 +19,7 @@ from src.core.exceptions import TradingSystemError
 from src.database import init_database, close_database, get_session
 from src.database.repository import TradeRepository, SignalRepository, PerformanceRepository, SystemRepository
 from src.database.models import Trade, Signal, SignalSource, TradeStatus, OrderType
-from src.execution import get_broker_connector, BrokerInterface
+from src.execution import create_broker, get_broker_status_message, BrokerInterface
 from src.strategies.data_manager import MultiTimeframeDataManager
 from src.strategies.indicators import IndicatorCalculator
 from src.strategies.filters.session_filter import SessionFilter
@@ -67,19 +67,34 @@ class TradingSystem:
         logger.info("Initializing database...")
         await init_database()
         
-        # Connect to broker
-        logger.info("Connecting to broker...")
-        self.broker = get_broker_connector(demo=settings.app_env.value != "production")
+        # Create and connect broker using factory (auto-detects best option)
+        logger.info("Connecting to broker...", mode=settings.broker_mode)
+        self.broker = await create_broker(settings)
         await self.broker.connect()
         
-        # Log account info
+        # Log broker status and account info
+        status_msg = get_broker_status_message(self.broker)
+        logger.info("Broker connected", status=status_msg)
+        
         account = await self.broker.get_account_info()
+        # Handle both dict (API client) and object (direct connector) responses
+        if isinstance(account, dict):
+            balance = float(account["balance"])
+            equity = float(account["equity"])
+            leverage = account["leverage"]
+            currency = account["currency"]
+        else:
+            balance = float(account.balance)
+            equity = float(account.equity)
+            leverage = account.leverage
+            currency = account.currency
+        
         logger.info(
             "Account loaded",
-            balance=float(account.balance),
-            equity=float(account.equity),
-            leverage=account.leverage,
-            currency=account.currency
+            balance=balance,
+            equity=equity,
+            leverage=leverage,
+            currency=currency
         )
 
         # Initialize MTFTR strategy components
@@ -188,8 +203,8 @@ class TradingSystem:
         try:
             while self.running:
                 try:
-                    # Check broker connection
-                    if not await self.broker.is_connected():
+                    # Check broker connection (is_connected is a property, not method)
+                    if not self.broker.is_connected:
                         logger.warning(LogMessages.CONNECTION_LOST)
                         await self.broker.connect()
                         logger.info(LogMessages.CONNECTION_RESTORED)

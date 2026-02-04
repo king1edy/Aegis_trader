@@ -136,7 +136,7 @@ class IndicatorCalculator:
     @staticmethod
     def calculate_wma(series: pd.Series, period: int) -> pd.Series:
         """
-        Calculate Weighted Moving Average.
+        Calculate Weighted Moving Average (optimized vectorized version).
 
         WMA gives more weight to recent prices using linear weighting.
         Weight[i] = (period - i) for i in range(period)
@@ -148,14 +148,17 @@ class IndicatorCalculator:
         Returns:
             Series with WMA values
         """
-        weights = np.arange(1, period + 1)
-
-        def wma_calc(x):
-            if len(x) < period:
-                return np.nan
-            return np.sum(weights * x) / weights.sum()
-
-        return series.rolling(window=period).apply(wma_calc, raw=True)
+        weights = np.arange(1, period + 1, dtype=float)
+        weights_sum = weights.sum()
+        
+        # Vectorized convolution approach - much faster than rolling().apply()
+        result = np.convolve(series.values, weights[::-1], mode='full')[:len(series)]
+        
+        # Normalize and handle the initial period
+        wma = pd.Series(result / weights_sum, index=series.index)
+        wma.iloc[:period - 1] = np.nan
+        
+        return wma
 
     @staticmethod
     def calculate_hull_ma(series: pd.Series, period: int) -> pd.Series:

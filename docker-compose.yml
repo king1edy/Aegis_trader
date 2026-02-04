@@ -8,6 +8,16 @@ services:
     restart: unless-stopped
     env_file:
       - .env
+    environment:
+      # Override hosts for Docker networking (container names, not localhost)
+      POSTGRES_HOST: postgres
+      REDIS_HOST: redis
+      # Override full URLs since .env has pre-constructed URLs that bypass host settings
+      DATABASE_URL: postgresql://${POSTGRES_USER:-trading_user}:${POSTGRES_PASSWORD:-trading_pass}@postgres:5432/${POSTGRES_DB:-trading_db}
+      REDIS_URL: redis://redis:6379/0
+      # Use API bridge mode to connect to MT5 running on Windows host
+      BROKER_MODE: bridge
+      MT5_BRIDGE_URL: http://host.docker.internal:8001
     volumes:
       - ./src:/app/src
       - ./logs:/app/logs
@@ -17,8 +27,8 @@ services:
       - redis
     networks:
       - trading_network
-    # Note: MT5 requires Windows, so for live trading you'll run
-    # the MT5 connector separately on Windows and communicate via API
+    # Note: MT5 requires Windows, so for live trading run the MT5 bridge
+    # on Windows: python -m src.execution.mt5_api_bridge
 
   # PostgreSQL with TimescaleDB for time-series data
   postgres:

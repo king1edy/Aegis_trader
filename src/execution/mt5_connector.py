@@ -30,6 +30,14 @@ from src.core.exceptions import (
     InsufficientMarginError,
 )
 
+# Import HistoricalDataLoader for demo connector
+try:
+    from src.data.historical_loader import HistoricalDataLoader
+    HISTORICAL_DATA_AVAILABLE = True
+except ImportError:
+    HistoricalDataLoader = None
+    HISTORICAL_DATA_AVAILABLE = False
+
 logger = get_logger("mt5_connector")
 
 
@@ -315,6 +323,18 @@ class MT5Connector(BrokerInterface):
             )
         
         self._connected = True
+        
+        # Enable default trading symbol in Market Watch
+        default_symbol = settings.default_symbol
+        if default_symbol:
+            if not mt5.symbol_select(default_symbol, True):
+                logger.warning(
+                    "Failed to enable symbol in Market Watch",
+                    symbol=default_symbol,
+                    error=mt5.last_error()
+                )
+            else:
+                logger.info("Symbol enabled in Market Watch", symbol=default_symbol)
         
         # Log account info
         account = await self.get_account_info()
@@ -766,8 +786,9 @@ class DemoConnector(BrokerInterface):
     """
     Demo connector for testing without real broker connection.
     Simulates trading with realistic behavior.
+    Uses historical data from .hcs files if available.
     """
-    
+
     def __init__(self, initial_balance: float = 10000.0):
         self.initial_balance = initial_balance
         self.balance = initial_balance
@@ -776,10 +797,22 @@ class DemoConnector(BrokerInterface):
         self.next_ticket = 1000
         self._connected = False
         self._prices: Dict[str, Tick] = {}
+        self._historical_loader = None
     
     async def connect(self) -> bool:
         self._connected = True
-        logger.info("Demo connector connected", balance=self.balance)
+
+        # Initialize historical data loader if available
+        if HISTORICAL_DATA_AVAILABLE and HistoricalDataLoader:
+            try:
+                self._historical_loader = HistoricalDataLoader(data_path="data/history")
+                logger.info("Demo connector connected with historical data", balance=self.balance)
+            except Exception as e:
+                logger.warning("Failed to initialize historical data loader", error=str(e))
+                logger.info("Demo connector connected (without historical data)", balance=self.balance)
+        else:
+            logger.info("Demo connector connected (without historical data)", balance=self.balance)
+
         return True
     
     async def disconnect(self) -> None:
@@ -843,7 +876,50 @@ class DemoConnector(BrokerInterface):
         count: int,
         start_time: Optional[datetime] = None
     ) -> List[PriceData]:
-        # Return empty for demo - implement with synthetic data if needed
+        # Try to load from historical data
+        if self._historical_loader:
+            try:
+                df = self._historical_loader.get_timeframe_data(
+                    symbol=symbol,
+                    timeframe=timeframe,
+                    count=count,
+                    end_time=start_time
+                )
+
+                # Convert DataFrame to List[PriceData]
+                price_data_list = []
+                for timestamp, row in df.iterrows():
+                    vol = int(row.get('volume', row.get('tick_volume', 0)))
+                    price_data_list.append(PriceData(
+                        timestamp=timestamp,
+                        open=row['open'],
+                        high=row['high'],
+                        low=row['low'],
+                        close=row['close'],
+                        tick_volume=vol,
+                        spread=int(row.get('spread', 20)),
+                        real_volume=int(row.get('real_volume', 0))
+                    ))
+
+                logger.debug(
+                    "Loaded historical data",
+                    symbol=symbol,
+                    timeframe=timeframe,
+                    bars=len(price_data_list)
+                )
+
+                return price_data_list
+
+            except Exception as e:
+                logger.error(
+                    "Failed to load historical data",
+                    symbol=symbol,
+                    timeframe=timeframe,
+                    error=str(e)
+                )
+                return []
+
+        # No historical data available
         return []
     
     async def get_positions(self, symbol: Optional[str] = None) -> List[Position]:
@@ -993,6 +1069,13 @@ def get_broker_connector(demo: bool = False) -> BrokerInterface:
     Returns:
         BrokerInterface implementation
     """
+    # Use MT5 if explicitly enabled or if MT5 credentials are configured
+    use_real_mt5 = settings.use_mt5 or (settings.mt5_login > 0 and settings.mt5_password)
+    
+    if use_real_mt5 and not demo:
+        logger.info("Using MT5 connector", login=settings.mt5_login, server=settings.mt5_server)
+        return MT5Connector()
+    
     if demo or settings.app_env.value == "development":
         logger.info("Using demo connector")
         return DemoConnector(initial_balance=10000.0)

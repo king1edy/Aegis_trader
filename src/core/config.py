@@ -59,8 +59,29 @@ class Settings(BaseSettings):
         default="C:/Program Files/MetaTrader 5/terminal64.exe",
         description="Path to MT5 terminal"
     )
+    
+    # Broker connection mode: "direct" (Windows), "bridge" (Docker/remote), "paper" (simulation)
+    broker_mode: str = Field(
+        default="auto",
+        description="Broker mode: 'auto' (detect), 'direct' (MT5 on Windows), 'bridge' (API bridge), 'paper' (simulation)"
+    )
+    
+    # MT5 API Bridge settings (for running in Docker or non-Windows)
+    mt5_bridge_url: str = Field(
+        default="http://host.docker.internal:8001",
+        description="URL of the MT5 API bridge server"
+    )
+    mt5_bridge_api_key: str = Field(
+        default="",
+        description="Optional API key for MT5 bridge authentication"
+    )
+    mt5_bridge_host: str = Field(default="0.0.0.0", description="Host for MT5 bridge server")
+    mt5_bridge_port: int = Field(default=8001, description="Port for MT5 bridge server")
+    
+    # Legacy settings (kept for compatibility)
     mt5_api_host: str = "localhost"
     mt5_api_port: int = 8001
+    use_mt5: bool = Field(default=False, description="Force using real MT5 connector instead of demo")
     
     # -------------------------------------------------------------------------
     # Trading Parameters

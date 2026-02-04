@@ -15,7 +15,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Dict, Optional, List
 from dataclasses import dataclass
 
-from src.execution.broker_interface import BrokerInterface
+from src.execution.mt5_connector import BrokerInterface
 from src.core.exceptions import StaleDataError, MarketDataError
 from src.core.logging_config import get_logger
 
@@ -289,9 +289,9 @@ class MultiTimeframeDataManager:
                     'high': bar.high,
                     'low': bar.low,
                     'close': bar.close,
-                    'volume': bar.volume,
-                    'tick_volume': getattr(bar, 'tick_volume', 0),
-                    'spread': getattr(bar, 'spread', 0)
+                    'volume': bar.tick_volume,  # PriceData uses tick_volume
+                    'tick_volume': bar.tick_volume,
+                    'spread': bar.spread
                 })
 
             df = pd.DataFrame(data)
