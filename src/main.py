@@ -18,6 +18,7 @@ from src.core.logging_config import setup_logging, get_logger, LogMessages, Trad
 from src.core.exceptions import TradingSystemError
 from src.database import init_database, close_database, get_session
 from src.database.repository import TradeRepository, SignalRepository, PerformanceRepository, SystemRepository
+from src.notifications import NotificationService
 from src.database.models import Trade, Signal, SignalSource, TradeStatus, OrderType
 from src.execution import create_broker, get_broker_status_message, BrokerInterface
 from src.strategies.data_manager import MultiTimeframeDataManager
@@ -53,6 +54,9 @@ class TradingSystem:
         self.position_manager: Optional[PositionManager] = None
         self.position_sizer: Optional[PositionSizer] = None
         self.risk_checker: Optional[RiskChecker] = None
+        
+        # Notification service
+        self.notifier: Optional[NotificationService] = None
     
     async def initialize(self) -> None:
         """Initialize all system components."""
@@ -95,8 +99,9 @@ class TradingSystem:
             equity=equity,
             leverage=leverage,
             currency=currency
-        )
-
+        )        
+        # Initialize notification service early so it can be passed to other components
+        self.notifier = NotificationService.get_instance(settings)
         # Initialize MTFTR strategy components
         if settings.mtftr_enabled:
             logger.info("Initializing MTFTR strategy components...")
@@ -122,7 +127,7 @@ class TradingSystem:
                 )
 
                 self.position_sizer = PositionSizer(settings)
-                self.risk_checker = RiskChecker(settings, trade_repo, perf_repo, system_repo)
+                self.risk_checker = RiskChecker(settings, trade_repo, perf_repo, system_repo, self.notifier)
 
                 # MTFTR strategy
                 strategy_config = MTFTRConfig(
@@ -172,10 +177,24 @@ class TradingSystem:
                     broker=self.broker,
                     data_manager=self.data_manager,
                     indicator_calc=self.indicator_calc,
-                    config=strategy_config
+                    config=strategy_config,
+                    notifier=self.notifier
                 )
 
             logger.info("MTFTR strategy initialized successfully")
+        
+        # Notify system started
+        if self.notifier.is_enabled:
+            await self.notifier.notify_system_status(
+                "started",
+                {
+                    "version": "1.0.0",
+                    "balance": balance,
+                    "equity": equity,
+                    "broker": settings.broker_mode,
+                    "symbol": settings.default_symbol
+                }
+            )
 
         logger.info("System initialization complete")
     
@@ -184,6 +203,10 @@ class TradingSystem:
         logger.info("Initiating shutdown...")
         self.running = False
         self._shutdown_event.set()
+        
+        # Notify system stopped
+        if self.notifier and self.notifier.is_enabled:
+            await self.notifier.notify_system_status("stopped")
         
         # Disconnect from broker
         if self.broker:
@@ -206,8 +229,12 @@ class TradingSystem:
                     # Check broker connection (is_connected is a property, not method)
                     if not self.broker.is_connected:
                         logger.warning(LogMessages.CONNECTION_LOST)
+                        if self.notifier and self.notifier.is_enabled:
+                            await self.notifier.notify_system_status("disconnected")
                         await self.broker.connect()
                         logger.info(LogMessages.CONNECTION_RESTORED)
+                        if self.notifier and self.notifier.is_enabled:
+                            await self.notifier.notify_system_status("reconnected")
                     
                     # Main loop iteration
                     await self._trading_iteration()
@@ -304,12 +331,32 @@ class TradingSystem:
                     reason=signal.reason,
                     confidence=signal.confidence
                 )
+                
+                # Notify signal generated
+                if self.notifier and self.notifier.is_enabled:
+                    await self.notifier.notify_signal_generated(
+                        symbol=signal.symbol,
+                        direction=signal.direction.value,
+                        entry_price=signal.entry_price,
+                        stop_loss=signal.stop_loss,
+                        take_profit=signal.take_profit_1,
+                        confidence=signal.confidence,
+                        timeframe="15M",
+                        reason=signal.reason or ""
+                    )
 
                 # Check risk limits
                 can_trade, rejection_reason = await self.risk_checker.check_all_limits(signal, account)
 
                 if not can_trade:
                     logger.info("Signal rejected by risk check", reason=rejection_reason)
+                    # Notify signal rejected
+                    if self.notifier and self.notifier.is_enabled:
+                        await self.notifier.notify_signal_rejected(
+                            symbol=signal.symbol,
+                            direction=signal.direction.value,
+                            reason=rejection_reason or "Unknown"
+                        )
                     return
 
                 # Calculate position size
@@ -393,6 +440,20 @@ class TradingSystem:
                         sl=signal.stop_loss,
                         lot_size=lot_size
                     )
+                    
+                    # Notify trade opened
+                    if self.notifier and self.notifier.is_enabled:
+                        await self.notifier.notify_trade_opened(
+                            symbol=signal.symbol,
+                            direction=signal.direction.value,
+                            entry_price=result.price,
+                            stop_loss=signal.stop_loss,
+                            take_profit_1=signal.take_profit_1,
+                            take_profit_2=signal.take_profit_2,
+                            lot_size=lot_size,
+                            confidence=signal.confidence,
+                            reason=signal.reason or ""
+                        )
                 else:
                     logger.error("Trade rejected by broker", reason=result.error_message)
 

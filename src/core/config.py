@@ -203,6 +203,7 @@ class Settings(BaseSettings):
     telegram_enabled: bool = False
     notify_on_trade_open: bool = True
     notify_on_trade_close: bool = True
+    notify_on_signal_generated: bool = True
     notify_on_daily_summary: bool = True
     notify_on_error: bool = True
     notify_on_drawdown_warning: bool = True

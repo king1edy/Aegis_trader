@@ -14,7 +14,7 @@ Exit triggers:
 """
 
 from datetime import datetime, timedelta, timezone
-from typing import Optional
+from typing import Optional, TYPE_CHECKING
 from decimal import Decimal
 
 from src.execution.mt5_connector import BrokerInterface, OrderDirection
@@ -24,6 +24,9 @@ from src.strategies.data_manager import MultiTimeframeDataManager
 from src.strategies.indicators import IndicatorCalculator, IndicatorConfig
 from src.strategies.mtftr import MTFTRConfig
 from src.core.logging_config import get_logger
+
+if TYPE_CHECKING:
+    from src.notifications import NotificationService
 
 logger = get_logger("position_manager")
 
@@ -45,7 +48,8 @@ class PositionManager:
         broker: BrokerInterface,
         data_manager: MultiTimeframeDataManager,
         indicator_calc: IndicatorCalculator,
-        config: MTFTRConfig
+        config: MTFTRConfig,
+        notifier: Optional["NotificationService"] = None
     ):
         """
         Initialize position manager.
@@ -55,11 +59,13 @@ class PositionManager:
             data_manager: Data manager for price data
             indicator_calc: Indicator calculator
             config: Strategy configuration
+            notifier: Notification service (optional)
         """
         self.broker = broker
         self.data_manager = data_manager
         self.indicator_calc = indicator_calc
         self.config = config
+        self.notifier = notifier
 
         # Create indicator config
         self.indicator_config = IndicatorConfig(
@@ -314,6 +320,22 @@ class PositionManager:
                     new_sl=breakeven_sl,
                     remaining_lots=float(trade.lot_size)
                 )
+                
+                # Notify partial close
+                if self.notifier and self.notifier.is_enabled:
+                    duration_minutes = int((datetime.now(timezone.utc) - trade.entry_time).total_seconds() / 60) if trade.entry_time else 0
+                    await self.notifier.notify_trade_closed(
+                        symbol=trade.symbol,
+                        direction=trade.order_type.value if hasattr(trade.order_type, 'value') else str(trade.order_type),
+                        entry_price=float(trade.entry_price),
+                        exit_price=result.price,
+                        profit_loss=0.0,  # P/L calculated later
+                        lot_size=close_volume,
+                        duration_minutes=duration_minutes,
+                        exit_reason="TP1",
+                        is_partial=True,
+                        partial_percent=int(self.config.tp1_close_percent * 100)
+                    )
             else:
                 logger.error(
                     "Failed to move SL to breakeven",
@@ -382,6 +404,22 @@ class PositionManager:
                 closed_lots=close_volume,
                 remaining_lots=float(trade.lot_size)
             )
+            
+            # Notify partial close
+            if self.notifier and self.notifier.is_enabled:
+                duration_minutes = int((datetime.now(timezone.utc) - trade.entry_time).total_seconds() / 60) if trade.entry_time else 0
+                await self.notifier.notify_trade_closed(
+                    symbol=trade.symbol,
+                    direction=trade.order_type.value if hasattr(trade.order_type, 'value') else str(trade.order_type),
+                    entry_price=float(trade.entry_price),
+                    exit_price=result.price,
+                    profit_loss=0.0,  # P/L calculated later
+                    lot_size=close_volume,
+                    duration_minutes=duration_minutes,
+                    exit_reason="TP2",
+                    is_partial=True,
+                    partial_percent=int(self.config.tp2_close_percent * 100)
+                )
         else:
             logger.error(
                 "Failed to close partial position at TP2",
@@ -597,6 +635,29 @@ class PositionManager:
                 exit_price=result.price,
                 reason=reason
             )
+            
+            # Notify trade closed
+            if self.notifier and self.notifier.is_enabled:
+                duration_minutes = int((datetime.now(timezone.utc) - trade.entry_time).total_seconds() / 60) if trade.entry_time else 0
+                # Calculate approximate P/L
+                entry = float(trade.entry_price)
+                exit_price = result.price
+                lot_size = float(trade.lot_size)
+                is_long = trade.order_type in [DBOrderType.BUY, DBOrderType.BUY_LIMIT, DBOrderType.BUY_STOP]
+                pnl = (exit_price - entry) * lot_size * 100 if is_long else (entry - exit_price) * lot_size * 100
+                
+                await self.notifier.notify_trade_closed(
+                    symbol=trade.symbol,
+                    direction=trade.order_type.value if hasattr(trade.order_type, 'value') else str(trade.order_type),
+                    entry_price=entry,
+                    exit_price=exit_price,
+                    profit_loss=pnl,
+                    lot_size=lot_size,
+                    duration_minutes=duration_minutes,
+                    exit_reason=reason,
+                    is_partial=False,
+                    partial_percent=100
+                )
         else:
             logger.error(
                 "Failed to close position",

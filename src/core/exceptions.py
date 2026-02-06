@@ -381,3 +381,24 @@ class RateLimitError(APIError):
             "Rate limit exceeded",
             {"retry_after_seconds": retry_after_seconds}
         )
+
+
+# =============================================================================
+# Notification Errors
+# =============================================================================
+
+class NotificationError(TradingSystemError):
+    """Base class for notification-related errors."""
+    pass
+
+
+class TelegramNotificationError(NotificationError):
+    """Raised when Telegram notification fails."""
+    
+    def __init__(self, message: str, error_details: str = None):
+        super().__init__(
+            f"Telegram notification failed: {message}",
+            {"error_details": error_details}
+        )
+
+
