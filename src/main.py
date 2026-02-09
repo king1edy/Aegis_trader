@@ -28,6 +28,7 @@ from src.strategies.mtftr import MTFTRStrategy, MTFTRConfig
 from src.strategies.position_manager import PositionManager
 from src.risk.position_sizer import PositionSizer
 from src.risk.risk_checker import RiskChecker
+from src.risk.risk_monitor import RiskMonitor, RiskMonitorConfig, RiskState
 
 # Initialize logging
 logger = setup_logging()
@@ -55,9 +56,19 @@ class TradingSystem:
         self.position_sizer: Optional[PositionSizer] = None
         self.risk_checker: Optional[RiskChecker] = None
         
+        # Background risk monitor
+        self.risk_monitor: Optional[RiskMonitor] = None
+        
         # Notification service
         self.notifier: Optional[NotificationService] = None
     
+    @staticmethod
+    def _get_balance(account) -> float:
+        """Get balance from account info, handling both dict and object responses."""
+        if isinstance(account, dict):
+            return float(account["balance"])
+        return float(account.balance)
+
     async def initialize(self) -> None:
         """Initialize all system components."""
         logger.info(LogMessages.SYSTEM_STARTED, version="1.0.0", env=settings.app_env.value)
@@ -183,6 +194,28 @@ class TradingSystem:
 
             logger.info("MTFTR strategy initialized successfully")
         
+        # Initialize background risk monitor
+        logger.info("Starting background risk monitor...")
+        daily_loss_pct = settings.max_daily_loss_percent * 100  # 0.03 -> 3.0
+        drawdown_pct = settings.max_drawdown_percent * 100      # 0.10 -> 10.0
+        risk_config = RiskMonitorConfig(
+            check_interval_seconds=18.0,
+            max_balance_drawdown_pct=drawdown_pct,
+            max_equity_drawdown_pct=drawdown_pct * 1.5,
+            max_daily_loss_pct=daily_loss_pct,
+            max_weekly_loss_pct=daily_loss_pct * 2,
+            min_margin_level_pct=150.0,
+            emergency_margin_level_pct=100.0
+        )
+        
+        self.risk_monitor = RiskMonitor(
+            config=risk_config,
+            broker=self.broker,
+            on_threshold_breach=self._on_risk_breach,
+            on_emergency_close=self._emergency_close_all
+        )
+        await self.risk_monitor.start()
+        
         # Notify system started
         if self.notifier.is_enabled:
             await self.notifier.notify_system_status(
@@ -255,6 +288,35 @@ class TradingSystem:
         finally:
             await self.shutdown()
     
+    async def _on_risk_breach(self, reason: str, state: RiskState) -> None:
+        """Handle risk threshold breach."""
+        logger.critical("RISK BREACH", reason=reason)
+        
+        if self.notifier and self.notifier.is_enabled:
+            await self.notifier.notify_system_status(
+                "risk_breach",
+                {
+                    "reason": reason,
+                    "balance_drawdown": f"{state.balance_drawdown_pct:.2f}%",
+                    "daily_loss": f"{state.daily_loss_pct:.2f}%",
+                    "margin_level": f"{state.margin_level:.1f}%"
+                }
+            )
+    
+    async def _emergency_close_all(self, reason: str) -> None:
+        """Emergency close all positions."""
+        logger.critical("EMERGENCY CLOSE ALL", reason=reason)
+        
+        positions = await self.broker.get_positions()
+        for pos in positions:
+            if pos.magic != 123456:
+                continue  # Only close our positions, not the EA's
+            try:
+                await self.broker.close_position(pos.ticket)
+                logger.info("Emergency closed position", ticket=pos.ticket)
+            except Exception as e:
+                logger.error("Failed to close position", ticket=pos.ticket, error=str(e))
+    
     async def _trading_iteration(self) -> None:
         """
         Single iteration of the trading loop.
@@ -265,6 +327,15 @@ class TradingSystem:
         3. Validate signals against risk limits
         4. Execute approved signals
         """
+        # Check if trading is blocked by risk monitor
+        if self.risk_monitor and self.risk_monitor.is_trading_blocked:
+            logger.warning(
+                "Trading blocked by risk monitor",
+                reason=self.risk_monitor.block_reason
+            )
+            await asyncio.sleep(60)  # Wait longer when blocked
+            return
+        
         # Get current account state
         account = await self.broker.get_account_info()
 
@@ -277,8 +348,8 @@ class TradingSystem:
             await asyncio.sleep(1)
             return
 
-        # Check for new 15M bar
-        if not await self.data_manager.is_new_bar(settings.default_symbol, "M15"):
+        # Check for new M1 bar
+        if not await self.data_manager.is_new_bar(settings.default_symbol, "M1"):
             await asyncio.sleep(1)
             return
 
@@ -341,7 +412,7 @@ class TradingSystem:
                         stop_loss=signal.stop_loss,
                         take_profit=signal.take_profit_1,
                         confidence=signal.confidence,
-                        timeframe="15M",
+                        timeframe="M1",
                         reason=signal.reason or ""
                     )
 
@@ -365,7 +436,7 @@ class TradingSystem:
                     symbol=signal.symbol,
                     entry_price=signal.entry_price,
                     stop_loss=signal.stop_loss,
-                    account_balance=float(account.balance),
+                    account_balance=self._get_balance(account),
                     risk_percent=settings.max_risk_per_trade,
                     symbol_info=symbol_info
                 )
@@ -419,7 +490,7 @@ class TradingSystem:
                         take_profit_2=signal.take_profit_2,
                         take_profit_final=signal.take_profit_final,
                         position_state="initial",
-                        account_balance_before=float((await self.broker.get_account_info()).balance),
+                        account_balance_before=self._get_balance(await self.broker.get_account_info()),
                         market_context=signal.market_context,
                         strategy_data=signal.strategy_data
                     )

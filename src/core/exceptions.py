@@ -230,16 +230,7 @@ class StrategyError(TradingSystemError):
 
 class InsufficientDataError(StrategyError):
     """Raised when there's not enough data for calculations."""
-    
-    def __init__(self, required_bars: int, available_bars: int, symbol: str):
-        super().__init__(
-            f"Insufficient data for {symbol}",
-            {
-                "required_bars": required_bars,
-                "available_bars": available_bars,
-                "symbol": symbol
-            }
-        )
+    pass
 
 
 class IndicatorCalculationError(StrategyError):
