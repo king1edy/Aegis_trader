@@ -177,8 +177,9 @@ class BrokerInterface(ABC):
         """Disconnect from broker."""
         pass
     
+    @property
     @abstractmethod
-    async def is_connected(self) -> bool:
+    def is_connected(self) -> bool:
         """Check if connected to broker."""
         pass
     
@@ -354,7 +355,8 @@ class MT5Connector(BrokerInterface):
             self._connected = False
             logger.info("Disconnected from MT5")
     
-    async def is_connected(self) -> bool:
+    @property
+    def is_connected(self) -> bool:
         """Check connection status."""
         if not self._connected or not self._mt5:
             return False
@@ -819,9 +821,10 @@ class DemoConnector(BrokerInterface):
         self._connected = False
         logger.info("Demo connector disconnected")
     
-    async def is_connected(self) -> bool:
+    @property
+    def is_connected(self) -> bool:
         return self._connected
-    
+
     async def get_account_info(self) -> AccountInfo:
         return AccountInfo(
             login=12345,
