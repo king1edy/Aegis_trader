@@ -83,6 +83,13 @@ python-telegram-bot==21.10
 prometheus-client==0.22.1
 structlog==25.4.0
 
+# OpenTelemetry for SigNoz integration
+opentelemetry-api==1.33.0
+opentelemetry-sdk==1.33.0
+opentelemetry-exporter-otlp==1.33.0
+opentelemetry-instrumentation-logging==0.54b0
+opentelemetry-semantic-conventions==0.54b0
+
 # -----------------------------------------------------------------------------
 # Backtesting
 # -----------------------------------------------------------------------------

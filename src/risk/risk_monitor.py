@@ -247,5 +247,7 @@ class RiskMonitor:
     def _get_margin_level(self, account) -> float:
         """Extract margin level from account object."""
         if isinstance(account, dict):
-            return float(account.get("margin_level", 0))
-        return float(getattr(account, "margin_level", 0))
+            val = account.get("margin_level")
+        else:
+            val = getattr(account, "margin_level", None)
+        return float(val) if val is not None else 0.0

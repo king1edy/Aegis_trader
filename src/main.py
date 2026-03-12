@@ -9,12 +9,11 @@ It initializes all components and starts the trading loop.
 import asyncio
 import signal
 import sys
-from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from typing import Optional
 
 from src.core.config import settings
-from src.core.logging_config import setup_logging, get_logger, LogMessages, TradingContextLogger
+from src.core.logging_config import setup_logging, LogMessages, TradingContextLogger
 from src.core.exceptions import TradingSystemError
 from src.database import init_database, close_database, get_session
 from src.database.repository import TradeRepository, SignalRepository, PerformanceRepository, SystemRepository
@@ -385,7 +384,6 @@ class TradingSystem:
                     proposed_entry=signal.entry_price,
                     proposed_sl=signal.stop_loss,
                     proposed_tp=signal.take_profit_1,
-                    confidence=signal.confidence,
                     market_context=signal.market_context,
                     was_executed=False
                 )
@@ -533,30 +531,119 @@ class TradingSystem:
 
 
 async def main() -> None:
-    """Main entry point."""
-    system = TradingSystem()
-    
-    # Setup signal handlers for graceful shutdown (Unix only)
-    if sys.platform != "win32":
-        loop = asyncio.get_event_loop()
-        
-        def signal_handler(sig):
-            logger.info(f"Received signal {sig.name}")
-            asyncio.create_task(system.shutdown())
-        
-        for sig in (signal.SIGTERM, signal.SIGINT):
-            loop.add_signal_handler(sig, lambda s=sig: signal_handler(s))
-    
-    try:
-        await system.initialize()
-        await system.run()
-    except KeyboardInterrupt:
-        logger.info("Keyboard interrupt received")
-    except Exception as e:
-        logger.exception("Fatal error", error=str(e))
-        sys.exit(1)
-    finally:
-        await system.shutdown()
+    """
+    Main entry point.
+
+    EA_MODE=true  → passive logging server (EA executes the strategy).
+    EA_MODE=false → full trading system (this process executes the strategy).
+    """
+    if settings.ea_mode:
+        # ── EA + Journal Mode ──────────────────────────────────────────────────
+        # ONE FastAPI app on ONE port (ea_log_server_port, default 8000).
+        #
+        # Routes composed from two routers:
+        #   ea_router      → POST /trade  GET /trades  GET /trades/summary  GET /health
+        #   journal_router → GET /        GET /api/journal/*
+        #
+        # MT5 poller starts as an asyncio background task so that manual
+        # trades opened directly on the broker are also journaled.
+        import uvicorn
+        from contextlib import asynccontextmanager
+        from fastapi import FastAPI
+        from fastapi.middleware.cors import CORSMiddleware
+
+        from src.trade_logging.trade_event_server import (
+            ea_router,
+            _load_csv_to_memory,
+            _ensure_csv_header,
+        )
+        from src.journal.router import journal_router
+        from src.journal.poller import JournalPoller
+        from src.database.repository import init_database
+
+        @asynccontextmanager
+        async def lifespan(app: FastAPI):
+            # 1. Ensure DB tables exist (safe to call repeatedly)
+            await init_database()
+            # 2. Seed the in-memory CSV store (existing EA behaviour)
+            _load_csv_to_memory()
+            _ensure_csv_header()
+            # 3. Start the MT5 poller as a background task
+            poller = JournalPoller()
+            poller_task = asyncio.create_task(poller.run())
+            logger.info(
+                "Trade journal started",
+                host    = settings.ea_log_server_host,
+                port    = settings.ea_log_server_port,
+                poll_s  = settings.journal_poll_interval_seconds,
+            )
+            yield
+            # 4. Graceful shutdown — cancel the poller task
+            poller_task.cancel()
+            try:
+                await poller_task
+            except asyncio.CancelledError:
+                pass
+
+        unified_app = FastAPI(
+            title       = "Aegis Trade Journal",
+            description = (
+                "EA event receiver (POST /trade) + "
+                "manual trade journal + pattern dashboard (GET /)"
+            ),
+            version     = "4.0.0",
+            lifespan    = lifespan,
+        )
+        unified_app.add_middleware(
+            CORSMiddleware,
+            allow_origins  = ["*"],
+            allow_methods  = ["*"],
+            allow_headers  = ["*"],
+        )
+        # EA webhook routes: /trade  /trades  /trades/summary  /health
+        unified_app.include_router(ea_router)
+        # Journal routes: /  /api/journal/*
+        unified_app.include_router(journal_router)
+
+        logger.info(
+            "Starting unified EA + Journal server",
+            host = settings.ea_log_server_host,
+            port = settings.ea_log_server_port,
+        )
+
+        uvicorn.run(
+            unified_app,
+            host      = settings.ea_log_server_host,
+            port      = settings.ea_log_server_port,
+            log_level = "warning",
+        )
+
+    else:
+        # ── Direct Trading Mode ────────────────────────────────────────────────
+        # This process connects to the broker and executes the strategy itself.
+        system = TradingSystem()
+
+        if sys.platform != "win32":
+            loop = asyncio.get_event_loop()
+
+            def _signal_handler(sig):
+                logger.info(f"Received signal {sig.name}")
+                asyncio.create_task(system.shutdown())
+
+            for sig in (signal.SIGTERM, signal.SIGINT):
+                loop.add_signal_handler(sig, lambda s=sig: _signal_handler(s))
+
+        try:
+            await system.initialize()
+            await system.run()
+        except KeyboardInterrupt:
+            logger.info("Keyboard interrupt received")
+        except Exception as e:
+            logger.exception("Fatal error", error=str(e))
+            sys.exit(1)
+        finally:
+            await system.shutdown()
+
 
 
 if __name__ == "__main__":
