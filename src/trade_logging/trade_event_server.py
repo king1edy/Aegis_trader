@@ -107,9 +107,9 @@ class TradeEvent(BaseModel):
     lots:       float
     risk_pct:   float
     sl_dist:    float
-    exit_price: float
-    pnl:        float
-    rr:         float
+    exit_price: Optional[float] = None
+    pnl:        Optional[float] = None
+    rr:         Optional[float] = None
     outcome:    str          # OPEN | WIN | WIN_PARTIAL | LOSS | TIME_EXIT
     d1_bias:    str          # LONG | SHORT | NEUTRAL
     h4_bias:    str          # LONG | SHORT | NEUTRAL
@@ -259,7 +259,7 @@ async def _persist_event(event: TradeEvent) -> None:
             "DB persist failed — CSV record still written",
             error=str(exc),
             ticket=event.ticket,
-            event=event.event,
+            trade_event=event.event,
         )
 
 
@@ -334,14 +334,14 @@ async def receive_trade_event(event: TradeEvent):
     exit_str = f"{event.exit_price:.2f}" if event.exit_price else "0.00"
     logger.info(
         "Event received",
-        event     = event.event,
-        ticket    = event.ticket,
-        direction = event.direction,
-        method    = event.method,
-        entry     = event.entry,
-        exit      = exit_str,
-        pnl       = event.pnl,
-        outcome   = event.outcome,
+        trade_event = event.event,
+        ticket      = event.ticket,
+        direction   = event.direction,
+        method      = event.method,
+        entry       = event.entry,
+        exit        = exit_str,
+        pnl         = event.pnl,
+        outcome     = event.outcome,
     )
     return {"status": "logged", "ticket": event.ticket, "event": event.event}
 

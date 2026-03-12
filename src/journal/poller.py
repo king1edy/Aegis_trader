@@ -80,9 +80,15 @@ class JournalPoller:
             )
             return
 
-        await self._seed_setup_tags()
-        await self._backfill()
-        self._backfilled = True
+        try:
+            await self._seed_setup_tags()
+            await self._backfill()
+            self._backfilled = True
+        except Exception as exc:
+            logger.error(
+                "Database unavailable during poller startup — skipping backfill",
+                extra={"error": str(exc)},
+            )
         logger.info(
             "MT5 poller running",
             extra={"interval_s": settings.journal_poll_interval_seconds},

@@ -564,7 +564,13 @@ async def main() -> None:
         @asynccontextmanager
         async def lifespan(app: FastAPI):
             # 1. Ensure DB tables exist (safe to call repeatedly)
-            await init_database()
+            try:
+                await init_database()
+            except Exception as exc:
+                logger.warning(
+                    "Database unavailable at startup — running in CSV-only mode",
+                    error=str(exc),
+                )
             # 2. Seed the in-memory CSV store (existing EA behaviour)
             _load_csv_to_memory()
             _ensure_csv_header()
@@ -611,12 +617,13 @@ async def main() -> None:
             port = settings.ea_log_server_port,
         )
 
-        uvicorn.run(
+        config = uvicorn.Config(
             unified_app,
             host      = settings.ea_log_server_host,
             port      = settings.ea_log_server_port,
             log_level = "warning",
         )
+        await uvicorn.Server(config).serve()
 
     else:
         # ── Direct Trading Mode ────────────────────────────────────────────────
