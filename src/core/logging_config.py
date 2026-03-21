@@ -179,6 +179,21 @@ def setup_otel_tracing() -> None:
     trace.set_tracer_provider(tracer_provider)
 
 
+def get_tracer(name: str = "aegis-trading") -> Optional[Any]:
+    """
+    Get an OpenTelemetry tracer for manual span creation.
+    
+    Args:
+        name: Name for the tracer (usually module/component name)
+    
+    Returns:
+        OpenTelemetry tracer if available, None otherwise
+    """
+    if not _otel_available:
+        return None
+    return trace.get_tracer(name)
+
+
 def setup_logging(
     log_level: Optional[str] = None,
     log_file: Optional[Path] = None,

@@ -78,12 +78,9 @@ PyYAML==6.0.3
 python-telegram-bot==21.10
 
 # -----------------------------------------------------------------------------
-# Monitoring & Metrics
+# Monitoring & Metrics - OpenTelemetry for SigNoz
 # -----------------------------------------------------------------------------
-prometheus-client==0.22.1
 structlog==25.4.0
-
-# OpenTelemetry for SigNoz integration
 opentelemetry-api==1.33.0
 opentelemetry-sdk==1.33.0
 opentelemetry-exporter-otlp==1.33.0
