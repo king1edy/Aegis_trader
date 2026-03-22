@@ -17,16 +17,16 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional, TYPE_CHECKING
 from decimal import Decimal
 
-from src.execution.mt5_connector import BrokerInterface, OrderDirection
-from src.database.repository import TradeRepository, get_session
-from src.database.models import Trade, TradeStatus, PartialClose, TradeModification, OrderType as DBOrderType
-from src.strategies.data_manager import MultiTimeframeDataManager
-from src.strategies.indicators import IndicatorCalculator, IndicatorConfig
-from src.strategies.mtftr import MTFTRConfig
-from src.core.logging_config import get_logger
+from execution.mt5_connector import BrokerInterface, OrderDirection
+from database.repository import TradeRepository, get_session
+from database.models import Trade, TradeStatus, PartialClose, TradeModification, OrderType as DBOrderType
+from strategies.data_manager import MultiTimeframeDataManager
+from strategies.indicators import IndicatorCalculator, IndicatorConfig
+from strategies.mtftr import MTFTRConfig
+from core.logging_config import get_logger
 
 if TYPE_CHECKING:
-    from src.notifications import NotificationService
+    from notifications import NotificationService
 
 logger = get_logger("position_manager")
 

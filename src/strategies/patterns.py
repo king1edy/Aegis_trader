@@ -14,7 +14,7 @@ import pandas as pd
 from typing import Optional, List
 from dataclasses import dataclass
 
-from src.core.logging_config import get_logger
+from core.logging_config import get_logger
 
 logger = get_logger("patterns")
 

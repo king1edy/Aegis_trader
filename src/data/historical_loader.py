@@ -11,8 +11,8 @@ from datetime import datetime, timezone
 from typing import List, Dict, Optional
 import pandas as pd
 
-from src.core.logging_config import get_logger
-from src.core.exceptions import MarketDataError
+from core.logging_config import get_logger
+from core.exceptions import MarketDataError
 
 logger = get_logger("historical_loader")
 

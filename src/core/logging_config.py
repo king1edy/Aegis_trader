@@ -16,7 +16,7 @@ from typing import Any, Dict, Optional
 import structlog
 from structlog.types import EventDict, Processor
 
-from src.core.config import settings
+from core.config import settings
 
 # OpenTelemetry imports for SigNoz integration
 _otel_available = False

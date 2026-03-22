@@ -14,7 +14,7 @@ import structlog
 import random
 import math
 
-from src.core.config import Settings
+from core.config import Settings
 
 logger = structlog.get_logger()
 

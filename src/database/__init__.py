@@ -4,7 +4,7 @@ Database Module
 Database models, repositories, and connection management.
 """
 
-from src.database.models import (
+from database.models import (
     Base,
     Trade,
     TradeStatus,
@@ -20,7 +20,7 @@ from src.database.models import (
     TradingPause,
     Signal,
 )
-from src.database.repository import (
+from database.repository import (
     engine,
     get_session,
     init_database,

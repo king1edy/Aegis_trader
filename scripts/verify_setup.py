@@ -8,8 +8,8 @@ import asyncio
 import sys
 from pathlib import Path
 
-# Add src to path
-sys.path.insert(0, str(Path(__file__).parent.parent))
+# Add src/ to path so imports resolve
+sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 
 async def verify_setup():
@@ -24,14 +24,14 @@ async def verify_setup():
     # 1. Check imports
     print("\n[1/5] Checking imports...")
     try:
-        from src.core.config import settings
+        from core.config import settings
         print("  ✓ Core configuration loaded")
     except Exception as e:
         errors.append(f"Failed to import config: {e}")
         print(f"  ✗ Configuration error: {e}")
     
     try:
-        from src.core.logging_config import get_logger
+        from core.logging_config import get_logger
         logger = get_logger("test")
         print("  ✓ Logging configured")
     except Exception as e:
@@ -39,14 +39,14 @@ async def verify_setup():
         print(f"  ✗ Logging error: {e}")
     
     try:
-        from src.database.models import Trade, AccountSnapshot
+        from database.models import Trade, AccountSnapshot
         print("  ✓ Database models loaded")
     except Exception as e:
         errors.append(f"Failed to import models: {e}")
         print(f"  ✗ Models error: {e}")
     
     try:
-        from src.execution.mt5_connector import DemoConnector, MT5Connector
+        from execution.mt5_connector import DemoConnector, MT5Connector
         print("  ✓ Execution module loaded")
     except Exception as e:
         errors.append(f"Failed to import execution: {e}")
@@ -55,7 +55,7 @@ async def verify_setup():
     # 2. Validate configuration
     print("\n[2/5] Validating configuration...")
     try:
-        from src.core.config import settings
+        from core.config import settings
         config_warnings = settings.validate_trading_config()
         for w in config_warnings:
             warnings.append(w)
@@ -68,7 +68,7 @@ async def verify_setup():
     # 3. Test demo connector
     print("\n[3/5] Testing demo connector...")
     try:
-        from src.execution import DemoConnector
+        from execution import DemoConnector
         connector = DemoConnector(initial_balance=10000)
         await connector.connect()
         
@@ -87,7 +87,7 @@ async def verify_setup():
     # 4. Check environment
     print("\n[4/5] Checking environment...")
     try:
-        from src.core.config import settings
+        from core.config import settings
         print(f"  Environment: {settings.app_env.value}")
         print(f"  Debug mode: {settings.debug}")
         print(f"  Log level: {settings.log_level}")
@@ -100,7 +100,7 @@ async def verify_setup():
     # 5. Database connection test (skip if no DB running)
     print("\n[5/5] Database configuration...")
     try:
-        from src.core.config import settings
+        from core.config import settings
         print(f"  DB URL: {settings.db_url[:50]}...")
         print(f"  Redis URL: {settings.redis_connection_url}")
         print("  ✓ Database configuration present")

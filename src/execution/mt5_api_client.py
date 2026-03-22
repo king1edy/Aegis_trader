@@ -13,8 +13,8 @@ from typing import Optional, Dict, Any, List
 import httpx
 import structlog
 
-from src.core.config import Settings
-from src.core.exceptions import (
+from core.config import Settings
+from core.exceptions import (
     MT5ConnectionError,
     OrderExecutionError,
     PositionNotFoundError,

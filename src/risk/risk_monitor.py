@@ -8,8 +8,8 @@ from datetime import datetime, timezone
 from typing import Optional, Callable, Awaitable
 from dataclasses import dataclass
 
-from src.core.config import settings
-from src.core.logging_config import get_logger
+from core.config import settings
+from core.logging_config import get_logger
 
 logger = get_logger(__name__)
 

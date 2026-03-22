@@ -8,9 +8,9 @@ Currently supports Telegram, designed for extensibility.
 
 from typing import Optional, Dict, Any
 
-from src.core.config import Settings, settings as default_settings
-from src.core.logging_config import get_logger
-from src.notifications.telegram import TelegramNotifier
+from core.config import Settings, settings as default_settings
+from core.logging_config import get_logger
+from notifications.telegram import TelegramNotifier
 
 logger = get_logger("notification_service")
 
@@ -23,7 +23,7 @@ class NotificationService:
     Provides a single interface for the trading system to send notifications.
     
     Usage:
-        from src.notifications import NotificationService
+        from notifications import NotificationService
         
         # Get singleton instance
         notifier = NotificationService.get_instance()

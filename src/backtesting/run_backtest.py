@@ -14,11 +14,11 @@ from tqdm import tqdm
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-from src.backtesting.engine import BacktestEngine, BacktestConfig, print_results
-from src.backtesting.data_provider import BacktestDataProvider
-from src.backtesting.strategy_simulator import MTFTRStrategySimulator, MTFTRBacktestConfig
-from src.strategies.indicators import IndicatorConfig
-from src.core.logging_config import setup_logging
+from backtesting.engine import BacktestEngine, BacktestConfig, print_results
+from backtesting.data_provider import BacktestDataProvider
+from backtesting.strategy_simulator import MTFTRStrategySimulator, MTFTRBacktestConfig
+from strategies.indicators import IndicatorConfig
+from core.logging_config import setup_logging
 
 # Setup logging
 logger = setup_logging()

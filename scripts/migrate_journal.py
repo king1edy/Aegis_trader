@@ -22,14 +22,14 @@ import asyncio
 import sys
 from pathlib import Path
 
-# Allow running from project root without installing the package
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+# Add src/ to path so imports resolve
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
 
-from src.core.config import get_settings
-from src.database.models import Base
+from core.config import get_settings
+from database.models import Base
 
 
 ALTER_STATEMENTS = [
