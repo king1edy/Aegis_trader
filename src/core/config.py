@@ -215,6 +215,25 @@ class Settings(BaseSettings):
     api_port: int = 8000
     api_secret_key: str = "change-this-in-production"
     tradingview_webhook_secret: str = ""
+
+    # -------------------------------------------------------------------------
+    # Authentication / JWT
+    # -------------------------------------------------------------------------
+    jwt_secret_key: str = Field(
+        default="change-me-in-production-use-openssl-rand-hex-32",
+        description="Secret key for JWT token signing",
+    )
+    jwt_algorithm: str = "HS256"
+    jwt_access_token_expire_minutes: int = Field(
+        default=1440,
+        description="JWT token lifetime in minutes (default 24h)",
+    )
+
+    # Multi-tenancy — used by JournalPoller in self-hosted mode
+    default_tenant_id: Optional[str] = Field(
+        default=None,
+        description="Default tenant UUID for JournalPoller. If unset, poller is skipped.",
+    )
     
     # -------------------------------------------------------------------------
     # Monitoring

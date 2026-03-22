@@ -88,9 +88,14 @@ class Trade(Base):
     
     # Primary key
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
-    
+
+    # Tenant isolation
+    tenant_id = Column(
+        UUID(as_uuid=True), ForeignKey("users.id"), nullable=True, index=True,
+    )
+
     # Broker reference
-    ticket = Column(Integer, unique=True, index=True, nullable=True)
+    ticket = Column(Integer, index=True, nullable=True)
     
     # Trade identification
     symbol = Column(String(20), nullable=False, index=True)
@@ -180,6 +185,8 @@ class Trade(Base):
 
     # Indexes for common queries
     __table_args__ = (
+        UniqueConstraint("ticket", "tenant_id", name="uq_trades_ticket_tenant"),
+        Index("ix_trades_tenant", "tenant_id"),
         Index("ix_trades_symbol_status", "symbol", "status"),
         Index("ix_trades_entry_time", "entry_time"),
         Index("ix_trades_strategy", "strategy_name", "signal_time"),
@@ -197,8 +204,11 @@ class PartialClose(Base):
     Records partial position closures (e.g., at TP1).
     """
     __tablename__ = "partial_closes"
-    
+
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    tenant_id = Column(
+        UUID(as_uuid=True), ForeignKey("users.id"), nullable=True, index=True,
+    )
     trade_id = Column(UUID(as_uuid=True), ForeignKey("trades.id"), nullable=False)
     
     close_time = Column(DateTime(timezone=True), nullable=False)
@@ -218,8 +228,11 @@ class TradeModification(Base):
     Audit trail for trade modifications (SL/TP changes).
     """
     __tablename__ = "trade_modifications"
-    
+
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    tenant_id = Column(
+        UUID(as_uuid=True), ForeignKey("users.id"), nullable=True, index=True,
+    )
     trade_id = Column(UUID(as_uuid=True), ForeignKey("trades.id"), nullable=False)
     
     modification_time = Column(DateTime(timezone=True), nullable=False)
@@ -279,9 +292,12 @@ class AccountSnapshot(Base):
     Taken at regular intervals and after each trade for tracking.
     """
     __tablename__ = "account_snapshots"
-    
+
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
-    
+    tenant_id = Column(
+        UUID(as_uuid=True), ForeignKey("users.id"), nullable=True, index=True,
+    )
+
     timestamp = Column(DateTime(timezone=True), nullable=False, index=True)
     
     # Account values
@@ -321,10 +337,13 @@ class DailyPerformance(Base):
     Aggregated daily performance metrics.
     """
     __tablename__ = "daily_performance"
-    
+
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
-    
-    date = Column(DateTime(timezone=True), nullable=False, unique=True, index=True)
+    tenant_id = Column(
+        UUID(as_uuid=True), ForeignKey("users.id"), nullable=True, index=True,
+    )
+
+    date = Column(DateTime(timezone=True), nullable=False, index=True)
     
     # Trade counts
     total_trades = Column(Integer, default=0)
@@ -356,9 +375,13 @@ class DailyPerformance(Base):
     # Strategy breakdown (JSON)
     strategy_breakdown = Column(JSONB, nullable=True)
     # Example: {"HULL_SUITE": {"trades": 5, "pnl": 125.50}, ...}
-    
+
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    __table_args__ = (
+        UniqueConstraint("date", "tenant_id", name="uq_daily_perf_date_tenant"),
+    )
 
 
 # =============================================================================
@@ -370,9 +393,12 @@ class SystemEvent(Base):
     System-level events for audit and debugging.
     """
     __tablename__ = "system_events"
-    
+
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
-    
+    tenant_id = Column(
+        UUID(as_uuid=True), ForeignKey("users.id"), nullable=True, index=True,
+    )
+
     timestamp = Column(DateTime(timezone=True), nullable=False, index=True)
     event_type = Column(String(50), nullable=False, index=True)
     severity = Column(String(20), nullable=False)  # INFO, WARNING, ERROR, CRITICAL
@@ -397,9 +423,12 @@ class TradingPause(Base):
     Critical for behavioral tracking - helps identify patterns.
     """
     __tablename__ = "trading_pauses"
-    
+
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
-    
+    tenant_id = Column(
+        UUID(as_uuid=True), ForeignKey("users.id"), nullable=True, index=True,
+    )
+
     start_time = Column(DateTime(timezone=True), nullable=False)
     end_time = Column(DateTime(timezone=True), nullable=True)
     
@@ -426,9 +455,12 @@ class Signal(Base):
     Useful for analyzing missed opportunities and signal quality.
     """
     __tablename__ = "signals"
-    
+
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
-    
+    tenant_id = Column(
+        UUID(as_uuid=True), ForeignKey("users.id"), nullable=True, index=True,
+    )
+
     timestamp = Column(DateTime(timezone=True), nullable=False, index=True)
     symbol = Column(String(20), nullable=False)
     strategy_name = Column(String(100), nullable=False)
@@ -475,9 +507,12 @@ class JournalDeal(Base):
     __tablename__ = "journal_deals"
 
     id              = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    tenant_id       = Column(
+        UUID(as_uuid=True), ForeignKey("users.id"), nullable=True, index=True,
+    )
 
     # MT5 identifiers
-    deal_id         = Column(BigInteger, unique=True, nullable=False)   # mt5 deal ticket
+    deal_id         = Column(BigInteger, nullable=False)   # mt5 deal ticket
     position_id     = Column(BigInteger, nullable=False, index=True)    # groups IN + OUT deals
     order_id        = Column(BigInteger, nullable=True)                  # originating order
 
@@ -502,6 +537,7 @@ class JournalDeal(Base):
     created_at      = Column(DateTime(timezone=True), server_default=func.now())
 
     __table_args__ = (
+        UniqueConstraint("deal_id", "tenant_id", name="uq_journal_deals_deal_tenant"),
         Index("ix_journal_deals_time", "deal_time"),
         Index("ix_journal_deals_symbol", "symbol"),
     )
@@ -520,10 +556,17 @@ class SetupTag(Base):
     __tablename__ = "setup_tags"
 
     id          = Column(Integer, primary_key=True, autoincrement=True)
-    name        = Column(String(100), unique=True, nullable=False)
+    tenant_id   = Column(
+        UUID(as_uuid=True), ForeignKey("users.id"), nullable=True, index=True,
+    )
+    name        = Column(String(100), nullable=False)
     color       = Column(String(7), default="#3B82F6")   # hex colour for UI badge
     description = Column(Text, nullable=True)
     created_at  = Column(DateTime(timezone=True), server_default=func.now())
+
+    __table_args__ = (
+        UniqueConstraint("name", "tenant_id", name="uq_setup_tags_name_tenant"),
+    )
 
     def __repr__(self) -> str:
         return f"<SetupTag {self.name}>"

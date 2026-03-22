@@ -8,24 +8,29 @@ trade_source="manual" (MT5 poller-detected trades) for a unified view.
 
 Every function returns plain Python dicts/lists — no ORM objects — so the
 router can serialize them directly to JSON without extra mapping.
+
+All functions accept a ``tenant_id`` parameter to scope results to a
+single user/tenant.
 """
 
 from __future__ import annotations
 
 from decimal import Decimal
 from typing import Optional
+from uuid import UUID
 
-from sqlalchemy import case, cast, desc, func, select, Float
+from sqlalchemy import and_, case, cast, desc, func, select, Float
 
-from src.database.models import (
+from database.models import (
     AccountSnapshot,
     JournalDeal,
+    OrderType,
     SetupTag,
     Trade,
     TradeOutcome,
     TradeStatus,
 )
-from src.database.repository import get_session
+from database.repository import get_session
 
 
 # ---------------------------------------------------------------------------
@@ -51,11 +56,17 @@ def _profit_factor(gross_profit: float, gross_loss: float) -> Optional[float]:
     return round(gross_profit / gross_loss, 2)
 
 
+def _tenant_filter(tenant_id: UUID, model=None):
+    """Return a WHERE clause for tenant_id on the given model (default Trade)."""
+    m = model or Trade
+    return m.tenant_id == tenant_id
+
+
 # ---------------------------------------------------------------------------
 # Summary stats
 # ---------------------------------------------------------------------------
 
-async def summary_stats() -> dict:
+async def summary_stats(tenant_id: UUID) -> dict:
     """Overall stats across all closed trades."""
     async with get_session() as session:
         result = await session.execute(
@@ -79,7 +90,7 @@ async def summary_stats() -> dict:
                 ).label("gross_loss"),
                 func.avg(Trade.risk_reward_actual).label("avg_rr"),
                 func.avg(Trade.profit_loss).label("avg_pnl"),
-            ).where(Trade.status == TradeStatus.CLOSED)
+            ).where(Trade.status == TradeStatus.CLOSED, _tenant_filter(tenant_id))
         )
         row = result.one()
 
@@ -94,7 +105,8 @@ async def summary_stats() -> dict:
         # Count open positions separately
         open_result = await session.execute(
             select(func.count(Trade.id)).where(
-                Trade.status.in_([TradeStatus.OPEN, TradeStatus.PARTIALLY_CLOSED])
+                Trade.status.in_([TradeStatus.OPEN, TradeStatus.PARTIALLY_CLOSED]),
+                _tenant_filter(tenant_id),
             )
         )
         open_count = open_result.scalar() or 0
@@ -104,12 +116,14 @@ async def summary_stats() -> dict:
             select(func.count(Trade.id)).where(
                 Trade.status == TradeStatus.CLOSED,
                 Trade.trade_source == "ea",
+                _tenant_filter(tenant_id),
             )
         )
         manual_result = await session.execute(
             select(func.count(Trade.id)).where(
                 Trade.status == TradeStatus.CLOSED,
                 Trade.trade_source == "manual",
+                _tenant_filter(tenant_id),
             )
         )
 
@@ -135,7 +149,7 @@ async def summary_stats() -> dict:
 # Breakdowns
 # ---------------------------------------------------------------------------
 
-async def by_session() -> list[dict]:
+async def by_session(tenant_id: UUID) -> list[dict]:
     """Win rate and net P&L per trading session."""
     async with get_session() as session:
         result = await session.execute(
@@ -148,7 +162,7 @@ async def by_session() -> list[dict]:
                 func.sum(Trade.profit_loss).label("net_pnl"),
                 func.avg(Trade.risk_reward_actual).label("avg_rr"),
             )
-            .where(Trade.status == TradeStatus.CLOSED)
+            .where(Trade.status == TradeStatus.CLOSED, _tenant_filter(tenant_id))
             .group_by(Trade.trading_session)
             .order_by(desc("net_pnl"))
         )
@@ -167,7 +181,7 @@ async def by_session() -> list[dict]:
     ]
 
 
-async def by_hour() -> list[dict]:
+async def by_hour(tenant_id: UUID) -> list[dict]:
     """Win rate and trade count for each hour of day (0–23 UTC)."""
     async with get_session() as session:
         result = await session.execute(
@@ -182,6 +196,7 @@ async def by_hour() -> list[dict]:
             .where(
                 Trade.status == TradeStatus.CLOSED,
                 Trade.hour_of_day.isnot(None),
+                _tenant_filter(tenant_id),
             )
             .group_by(Trade.hour_of_day)
             .order_by(Trade.hour_of_day)
@@ -200,7 +215,7 @@ async def by_hour() -> list[dict]:
     ]
 
 
-async def by_day_of_week() -> list[dict]:
+async def by_day_of_week(tenant_id: UUID) -> list[dict]:
     """Win rate per day of week (0=Mon … 6=Sun)."""
     _day_names = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
 
@@ -217,6 +232,7 @@ async def by_day_of_week() -> list[dict]:
             .where(
                 Trade.status == TradeStatus.CLOSED,
                 Trade.day_of_week.isnot(None),
+                _tenant_filter(tenant_id),
             )
             .group_by(Trade.day_of_week)
             .order_by(Trade.day_of_week)
@@ -236,7 +252,7 @@ async def by_day_of_week() -> list[dict]:
     ]
 
 
-async def by_setup_tag() -> list[dict]:
+async def by_setup_tag(tenant_id: UUID) -> list[dict]:
     """Win rate and net P&L per setup tag."""
     async with get_session() as session:
         result = await session.execute(
@@ -252,6 +268,7 @@ async def by_setup_tag() -> list[dict]:
             .where(
                 Trade.status == TradeStatus.CLOSED,
                 Trade.setup_tag.isnot(None),
+                _tenant_filter(tenant_id),
             )
             .group_by(Trade.setup_tag)
             .order_by(desc("net_pnl"))
@@ -271,7 +288,7 @@ async def by_setup_tag() -> list[dict]:
     ]
 
 
-async def by_symbol() -> list[dict]:
+async def by_symbol(tenant_id: UUID) -> list[dict]:
     """Win rate per symbol."""
     async with get_session() as session:
         result = await session.execute(
@@ -283,7 +300,7 @@ async def by_symbol() -> list[dict]:
                 ).label("wins"),
                 func.sum(Trade.profit_loss).label("net_pnl"),
             )
-            .where(Trade.status == TradeStatus.CLOSED)
+            .where(Trade.status == TradeStatus.CLOSED, _tenant_filter(tenant_id))
             .group_by(Trade.symbol)
             .order_by(desc("net_pnl"))
         )
@@ -301,10 +318,8 @@ async def by_symbol() -> list[dict]:
     ]
 
 
-async def by_direction() -> list[dict]:
+async def by_direction(tenant_id: UUID) -> list[dict]:
     """Win rate split by BUY vs SELL."""
-    from src.database.models import OrderType
-
     async with get_session() as session:
         result = await session.execute(
             select(
@@ -315,7 +330,7 @@ async def by_direction() -> list[dict]:
                 ).label("wins"),
                 func.sum(Trade.profit_loss).label("net_pnl"),
             )
-            .where(Trade.status == TradeStatus.CLOSED)
+            .where(Trade.status == TradeStatus.CLOSED, _tenant_filter(tenant_id))
             .group_by(Trade.order_type)
         )
         rows = result.all()
@@ -336,7 +351,7 @@ async def by_direction() -> list[dict]:
 # Equity curve
 # ---------------------------------------------------------------------------
 
-async def equity_curve(limit: int = 500) -> list[dict]:
+async def equity_curve(tenant_id: UUID, limit: int = 500) -> list[dict]:
     """
     Return recent AccountSnapshot rows for balance/equity time series.
     Limited to `limit` most recent points (downsampled for large histories).
@@ -349,6 +364,7 @@ async def equity_curve(limit: int = 500) -> list[dict]:
                 AccountSnapshot.equity,
                 AccountSnapshot.floating_pl,
             )
+            .where(AccountSnapshot.tenant_id == tenant_id)
             .order_by(desc(AccountSnapshot.timestamp))
             .limit(limit)
         )
@@ -371,6 +387,7 @@ async def equity_curve(limit: int = 500) -> list[dict]:
 # ---------------------------------------------------------------------------
 
 async def list_trades(
+    tenant_id:  UUID,
     page:       int = 1,
     per_page:   int = 50,
     symbol:     Optional[str] = None,
@@ -381,15 +398,12 @@ async def list_trades(
     status:     Optional[str] = None,
 ) -> dict:
     """Paginated trade list with optional filters."""
-    from sqlalchemy import and_
-
     offset = (page - 1) * per_page
-    conditions = []
+    conditions = [_tenant_filter(tenant_id)]
 
     if symbol:
         conditions.append(Trade.symbol == symbol.upper())
     if direction:
-        from src.database.models import OrderType
         try:
             conditions.append(Trade.order_type == OrderType[direction.upper()])
         except KeyError:
@@ -406,7 +420,7 @@ async def list_trades(
         except KeyError:
             pass
 
-    where_clause = and_(*conditions) if conditions else True
+    where_clause = and_(*conditions)
 
     async with get_session() as db:
         count_result = await db.execute(
@@ -432,13 +446,14 @@ async def list_trades(
     }
 
 
-async def open_trades() -> list[dict]:
+async def open_trades(tenant_id: UUID) -> list[dict]:
     """Return all currently open / partially-closed positions."""
     async with get_session() as db:
         result = await db.execute(
             select(Trade)
             .where(
-                Trade.status.in_([TradeStatus.OPEN, TradeStatus.PARTIALLY_CLOSED])
+                Trade.status.in_([TradeStatus.OPEN, TradeStatus.PARTIALLY_CLOSED]),
+                _tenant_filter(tenant_id),
             )
             .order_by(Trade.entry_time)
         )
@@ -446,16 +461,21 @@ async def open_trades() -> list[dict]:
     return [_trade_to_dict(t) for t in trades]
 
 
-async def list_deals(page: int = 1, per_page: int = 100) -> dict:
+async def list_deals(tenant_id: UUID, page: int = 1, per_page: int = 100) -> dict:
     """Paginated raw deal audit log."""
     offset = (page - 1) * per_page
 
     async with get_session() as db:
-        count_result = await db.execute(select(func.count(JournalDeal.id)))
+        count_result = await db.execute(
+            select(func.count(JournalDeal.id)).where(
+                JournalDeal.tenant_id == tenant_id
+            )
+        )
         total = count_result.scalar() or 0
 
         result = await db.execute(
             select(JournalDeal)
+            .where(JournalDeal.tenant_id == tenant_id)
             .order_by(desc(JournalDeal.deal_time))
             .offset(offset)
             .limit(per_page)
@@ -471,10 +491,14 @@ async def list_deals(page: int = 1, per_page: int = 100) -> dict:
     }
 
 
-async def get_tags() -> list[dict]:
-    """Return all setup tags."""
+async def get_tags(tenant_id: UUID) -> list[dict]:
+    """Return all setup tags for this tenant."""
     async with get_session() as db:
-        result = await db.execute(select(SetupTag).order_by(SetupTag.name))
+        result = await db.execute(
+            select(SetupTag)
+            .where(SetupTag.tenant_id == tenant_id)
+            .order_by(SetupTag.name)
+        )
         tags = result.scalars().all()
     return [{"id": t.id, "name": t.name, "color": t.color, "description": t.description} for t in tags]
 

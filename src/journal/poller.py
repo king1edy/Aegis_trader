@@ -20,11 +20,12 @@ import asyncio
 import logging
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
+from uuid import UUID as PyUUID
 
 from sqlalchemy import select
 
-from src.core.config import get_settings
-from src.database.models import (
+from core.config import get_settings
+from database.models import (
     AccountSnapshot,
     JournalDeal,
     PartialClose,
@@ -34,8 +35,8 @@ from src.database.models import (
     TradeStatus,
     DEFAULT_SETUP_TAGS,
 )
-from src.database.repository import get_session
-from src.journal.deal_mapper import (
+from database.repository import get_session
+from journal.deal_mapper import (
     account_info_to_snapshot,
     apply_out_deal_to_trade,
     deal_to_journal_deal,
@@ -44,7 +45,7 @@ from src.journal.deal_mapper import (
     make_tp_modification,
     position_to_trade,
 )
-from src.journal.mt5_reader import MT5DealRecord, MT5PositionRecord, MT5Reader
+from journal.mt5_reader import MT5DealRecord, MT5PositionRecord, MT5Reader
 
 logger = logging.getLogger("journal.poller")
 settings = get_settings()
@@ -66,6 +67,12 @@ class JournalPoller:
         self._last_deal_time: datetime = datetime.now(tz=timezone.utc)
         self._last_snapshot_time: datetime = datetime.min.replace(tzinfo=timezone.utc)
         self._backfilled = False
+        # Resolve tenant_id for all records written by this poller
+        self._tenant_id: PyUUID | None = (
+            PyUUID(settings.default_tenant_id)
+            if settings.default_tenant_id
+            else None
+        )
 
     # ------------------------------------------------------------------
     # Public entry point
@@ -73,6 +80,13 @@ class JournalPoller:
 
     async def run(self) -> None:
         """Main loop.  Run as an asyncio background task."""
+        if self._tenant_id is None:
+            logger.info(
+                "JournalPoller skipped — no DEFAULT_TENANT_ID configured. "
+                "Set DEFAULT_TENANT_ID in .env for self-hosted mode."
+            )
+            return
+
         if not self._reader.connect():
             logger.warning(
                 "MT5 connection failed — manual trade polling disabled. "
@@ -111,14 +125,24 @@ class JournalPoller:
     # Setup tag seeding
     # ------------------------------------------------------------------
 
+    def _stamp(self, obj):
+        """Set tenant_id on an ORM object before persisting."""
+        if self._tenant_id is not None:
+            obj.tenant_id = self._tenant_id
+        return obj
+
     async def _seed_setup_tags(self) -> None:
-        """Insert DEFAULT_SETUP_TAGS if the setup_tags table is empty."""
+        """Insert DEFAULT_SETUP_TAGS if the setup_tags table is empty for this tenant."""
         async with get_session() as session:
-            result = await session.execute(select(SetupTag).limit(1))
+            result = await session.execute(
+                select(SetupTag).where(SetupTag.tenant_id == self._tenant_id).limit(1)
+            )
             if result.scalar_one_or_none() is not None:
                 return  # already seeded
             for tag_data in DEFAULT_SETUP_TAGS:
-                session.add(SetupTag(**tag_data))
+                tag = SetupTag(**tag_data)
+                self._stamp(tag)
+                session.add(tag)
             await session.commit()
             logger.info("Setup tags seeded", extra={"count": len(DEFAULT_SETUP_TAGS)})
 
@@ -162,7 +186,7 @@ class JournalPoller:
                 # Persist JournalDeal rows (skip duplicates)
                 for d in pos_deals:
                     if d.deal_id not in existing_ids:
-                        session.add(deal_to_journal_deal(d))
+                        session.add(self._stamp(deal_to_journal_deal(d)))
                         existing_ids.add(d.deal_id)
 
                 # Check if Trade already exists for this position
@@ -180,6 +204,7 @@ class JournalPoller:
 
                 entry_deal = in_deals[0]
                 trade = in_deal_to_trade(entry_deal)
+                self._stamp(trade)
 
                 if out_deals:
                     exit_deal = out_deals[-1]   # last exit (fully closed)
@@ -219,6 +244,7 @@ class JournalPoller:
                     if existing is None:
                         # Truly new manual position
                         trade = position_to_trade(pos)
+                        self._stamp(trade)
                         session.add(trade)
                         logger.info(
                             "New manual position detected",
@@ -282,7 +308,7 @@ class JournalPoller:
             for deal in deals:
                 # Always persist the raw deal for audit trail
                 if deal.deal_id not in existing_ids:
-                    session.add(deal_to_journal_deal(deal))
+                    session.add(self._stamp(deal_to_journal_deal(deal)))
                     existing_ids.add(deal.deal_id)
 
                 # For OUT deals, update the matching Trade record
@@ -325,6 +351,7 @@ class JournalPoller:
 
         snapshot = account_info_to_snapshot(info)
         snapshot.open_positions = len(self._known_positions)
+        self._stamp(snapshot)
 
         async with get_session() as session:
             session.add(snapshot)
