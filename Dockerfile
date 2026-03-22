@@ -19,9 +19,14 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -r requirements.txt
 
-# Copy application code
+# Copy application code + Alembic config (needed for migrations)
+COPY alembic.ini ./
+COPY alembic/ ./alembic/
 COPY src/ ./src/
 COPY scripts/ ./scripts/
+
+# Make entrypoint executable
+RUN chmod +x scripts/entrypoint.sh
 
 # Create non-root user for security
 RUN adduser --disabled-password --gecos '' appuser && \
@@ -32,9 +37,8 @@ USER appuser
 RUN mkdir -p /app/logs /app/data
 
 # Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
     CMD curl -f http://localhost:8000/health || exit 1
 
-# Default command — run from inside src/ so imports resolve
-WORKDIR /app/src
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Entrypoint runs migrations then starts uvicorn
+ENTRYPOINT ["bash", "scripts/entrypoint.sh"]

@@ -14,6 +14,7 @@ from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy import select
 
 from auth.models import ApiKey, User
+from auth.subscription_models import RateLimits, Subscription, UserSettings
 from auth.security import (
     create_access_token,
     generate_api_key,
@@ -50,12 +51,30 @@ class TokenResponse(BaseModel):
     token_type: str = "bearer"
 
 
-class UserProfile(BaseModel):
+class SubscriptionInfo(BaseModel):
+    tier: str
+    status: str
+    trial_ends_at: Optional[str] = None
+    current_period_end: Optional[str] = None
+
+
+class RateLimitInfo(BaseModel):
+    api_requests_per_minute: int
+    api_requests_per_day: int
+    webhook_events_per_minute: int
+    max_backtests_per_day: int
+    max_strategies: int
+    max_connected_accounts: int
+
+
+class FullProfile(BaseModel):
     id: str
     email: str
     username: str
     is_admin: bool
     created_at: str
+    subscription: SubscriptionInfo
+    rate_limits: RateLimitInfo
 
 
 class CreateApiKeyRequest(BaseModel):
@@ -105,6 +124,12 @@ async def register(body: RegisterRequest):
             hashed_password=hash_password(body.password),
         )
         session.add(user)
+        await session.flush()  # assigns user.id
+
+        # Create default subscription + settings in same transaction
+        session.add(Subscription(user_id=user.id, tier="journal", status="trialing"))
+        session.add(UserSettings(user_id=user.id))
+
         await session.commit()
         await session.refresh(user)
 
@@ -147,15 +172,50 @@ async def login(form_data: OAuth2PasswordRequestForm = Depends()):
         return TokenResponse(access_token=token)
 
 
-@auth_router.get("/me", response_model=UserProfile)
+@auth_router.get("/me", response_model=FullProfile)
 async def get_me(user: User = Depends(get_current_user)):
-    """Return the authenticated user's profile."""
-    return UserProfile(
+    """Return the authenticated user's profile with subscription and rate limits."""
+    async with get_session() as session:
+        result = await session.execute(
+            select(Subscription, RateLimits)
+            .join(RateLimits, RateLimits.tier == Subscription.tier)
+            .where(Subscription.user_id == user.id)
+        )
+        row = result.one_or_none()
+
+        if row is None:
+            # Fallback: no subscription row yet (shouldn't happen after migration)
+            sub_info = SubscriptionInfo(tier="journal", status="trialing")
+            rl_info = RateLimitInfo(
+                api_requests_per_minute=30, api_requests_per_day=5000,
+                webhook_events_per_minute=60, max_backtests_per_day=2,
+                max_strategies=1, max_connected_accounts=1,
+            )
+        else:
+            sub, rl = row
+            sub_info = SubscriptionInfo(
+                tier=sub.tier,
+                status=sub.status,
+                trial_ends_at=sub.trial_ends_at.isoformat() if sub.trial_ends_at else None,
+                current_period_end=sub.current_period_end.isoformat() if sub.current_period_end else None,
+            )
+            rl_info = RateLimitInfo(
+                api_requests_per_minute=rl.api_requests_per_minute,
+                api_requests_per_day=rl.api_requests_per_day,
+                webhook_events_per_minute=rl.webhook_events_per_minute,
+                max_backtests_per_day=rl.max_backtests_per_day,
+                max_strategies=rl.max_strategies,
+                max_connected_accounts=rl.max_connected_accounts,
+            )
+
+    return FullProfile(
         id=str(user.id),
         email=user.email,
         username=user.username,
         is_admin=user.is_admin,
         created_at=user.created_at.isoformat(),
+        subscription=sub_info,
+        rate_limits=rl_info,
     )
 
 

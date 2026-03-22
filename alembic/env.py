@@ -20,6 +20,7 @@ from alembic import context
 from core.config import settings  # noqa: E402
 from database.models import Base  # noqa: E402
 import auth.models  # noqa: F401, E402  — registers User & ApiKey tables
+import auth.subscription_models  # noqa: F401, E402  — registers Subscription, UserSettings, RateLimits
 
 # Alembic Config object
 config = context.config

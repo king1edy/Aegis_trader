@@ -28,6 +28,7 @@ from strategies.position_manager import PositionManager
 from risk.position_sizer import PositionSizer
 from risk.risk_checker import RiskChecker
 from risk.risk_monitor import RiskMonitor, RiskMonitorConfig, RiskState
+from settings.loader import TradingConfig, get_trading_config
 
 logger = setup_logging()
 
@@ -40,10 +41,14 @@ class TradingSystem:
     risk management, and execution.
     """
 
-    def __init__(self):
+    def __init__(self, user_id: Optional[str] = None):
+        self.user_id = user_id
         self.broker: Optional[BrokerInterface] = None
         self.running = False
         self._shutdown_event = asyncio.Event()
+
+        # Per-user trading config (loaded from DB on initialize)
+        self.trading_config: Optional[TradingConfig] = None
 
         # MTFTR Strategy components
         self.data_manager: Optional[MultiTimeframeDataManager] = None
@@ -71,14 +76,25 @@ class TradingSystem:
         """Initialize all system components."""
         logger.info(LogMessages.SYSTEM_STARTED, version="1.0.0", env=settings.app_env.value)
 
-        # Validate configuration
-        warnings = settings.validate_trading_config()
-        for warning in warnings:
-            logger.warning("Configuration warning", message=warning)
-
         # Initialize database
         logger.info("Initializing database...")
         await init_database()
+
+        # Load per-user trading config from DB (falls back to env)
+        from uuid import UUID
+        uid = UUID(self.user_id) if self.user_id else None
+        self.trading_config = tc = await get_trading_config(uid)
+        logger.info(
+            "Trading config loaded",
+            source=tc._source,
+            symbol=tc.default_symbol,
+            max_lot=tc.max_lot_size,
+        )
+
+        # Validate env-level configuration
+        warnings = settings.validate_trading_config()
+        for warning in warnings:
+            logger.warning("Configuration warning", message=warning)
 
         # Create and connect broker using factory (auto-detects best option)
         logger.info("Connecting to broker...", mode=settings.broker_mode)
@@ -109,10 +125,10 @@ class TradingSystem:
             leverage=leverage,
             currency=currency
         )
-        # Initialize notification service early so it can be passed to other components
-        self.notifier = NotificationService.get_instance(settings)
+        # Initialize notification service with per-user trading config
+        self.notifier = NotificationService.get_instance(tc)
         # Initialize MTFTR strategy components
-        if settings.mtftr_enabled:
+        if tc.mtftr_enabled:
             logger.info("Initializing MTFTR strategy components...")
 
             async with get_session() as session:
@@ -129,49 +145,49 @@ class TradingSystem:
                 self.indicator_calc = IndicatorCalculator()
 
                 self.session_filter = SessionFilter(
-                    london_start=settings.london_session_start,
-                    london_end=settings.london_session_end,
-                    ny_start=settings.ny_session_start,
-                    ny_end=settings.ny_session_end
+                    london_start=tc.london_session_start,
+                    london_end=tc.london_session_end,
+                    ny_start=tc.ny_session_start,
+                    ny_end=tc.ny_session_end
                 )
 
-                self.position_sizer = PositionSizer(settings)
-                self.risk_checker = RiskChecker(settings, trade_repo, perf_repo, system_repo, self.notifier)
+                self.position_sizer = PositionSizer(tc)
+                self.risk_checker = RiskChecker(tc, trade_repo, perf_repo, system_repo, self.notifier)
 
                 # MTFTR strategy
                 strategy_config = MTFTRConfig(
                     name="MTFTR",
-                    symbol=settings.default_symbol,
+                    symbol=tc.default_symbol,
                     enabled=True,
-                    max_positions=settings.max_open_positions,
-                    max_daily_trades=settings.max_daily_trades,
-                    risk_per_trade=settings.max_risk_per_trade,
+                    max_positions=tc.max_open_positions,
+                    max_daily_trades=tc.max_daily_trades,
+                    risk_per_trade=tc.max_risk_per_trade,
                     # Indicator periods
-                    ema_200=settings.mtftr_ema_200,
-                    ema_50=settings.mtftr_ema_50,
-                    ema_21=settings.mtftr_ema_21,
-                    hull_55=settings.mtftr_hull_55,
-                    hull_34=settings.mtftr_hull_34,
-                    rsi_period=settings.mtftr_rsi_period,
-                    atr_period=settings.mtftr_atr_period,
-                    swing_lookback=settings.mtftr_swing_lookback,
+                    ema_200=tc.mtftr_ema_200,
+                    ema_50=tc.mtftr_ema_50,
+                    ema_21=tc.mtftr_ema_21,
+                    hull_55=tc.mtftr_hull_55,
+                    hull_34=tc.mtftr_hull_34,
+                    rsi_period=tc.mtftr_rsi_period,
+                    atr_period=tc.mtftr_atr_period,
+                    swing_lookback=tc.mtftr_swing_lookback,
                     # Risk parameters
-                    tp1_rr=settings.mtftr_tp1_rr,
-                    tp2_rr=settings.mtftr_tp2_rr,
-                    tp1_close_percent=settings.mtftr_tp1_close_percent,
-                    tp2_close_percent=settings.mtftr_tp2_close_percent,
-                    trail_percent=settings.mtftr_trail_percent,
+                    tp1_rr=tc.mtftr_tp1_rr,
+                    tp2_rr=tc.mtftr_tp2_rr,
+                    tp1_close_percent=tc.mtftr_tp1_close_percent,
+                    tp2_close_percent=tc.mtftr_tp2_close_percent,
+                    trail_percent=tc.mtftr_trail_percent,
                     # Entry filters
-                    min_rsi_long=settings.mtftr_min_rsi_long,
-                    max_rsi_long=settings.mtftr_max_rsi_long,
-                    min_rsi_short=settings.mtftr_min_rsi_short,
-                    max_rsi_short=settings.mtftr_max_rsi_short,
+                    min_rsi_long=tc.mtftr_min_rsi_long,
+                    max_rsi_long=tc.mtftr_max_rsi_long,
+                    min_rsi_short=tc.mtftr_min_rsi_short,
+                    max_rsi_short=tc.mtftr_max_rsi_short,
                     # Stop loss limits
-                    min_sl_atr=settings.mtftr_min_sl_atr,
-                    max_sl_atr=settings.mtftr_max_sl_atr,
-                    sl_buffer_atr=settings.mtftr_sl_buffer_atr,
+                    min_sl_atr=tc.mtftr_min_sl_atr,
+                    max_sl_atr=tc.mtftr_max_sl_atr,
+                    sl_buffer_atr=tc.mtftr_sl_buffer_atr,
                     # Limits
-                    max_trade_duration_hours=settings.mtftr_max_trade_hours
+                    max_trade_duration_hours=tc.mtftr_max_trade_hours
                 )
 
                 self.strategy = MTFTRStrategy(
@@ -194,8 +210,8 @@ class TradingSystem:
 
         # Initialize background risk monitor
         logger.info("Starting background risk monitor...")
-        daily_loss_pct = settings.max_daily_loss_percent * 100  # 0.03 -> 3.0
-        drawdown_pct = settings.max_drawdown_percent * 100      # 0.10 -> 10.0
+        daily_loss_pct = tc.max_daily_loss_percent * 100  # 0.03 -> 3.0
+        drawdown_pct = tc.max_drawdown_percent * 100      # 0.10 -> 10.0
         risk_config = RiskMonitorConfig(
             check_interval_seconds=18.0,
             max_balance_drawdown_pct=drawdown_pct,
@@ -223,7 +239,7 @@ class TradingSystem:
                     "balance": balance,
                     "equity": equity,
                     "broker": settings.broker_mode,
-                    "symbol": settings.default_symbol
+                    "symbol": tc.default_symbol
                 }
             )
 
@@ -347,7 +363,7 @@ class TradingSystem:
             return
 
         # Check for new M1 bar
-        if not await self.data_manager.is_new_bar(settings.default_symbol, "M1"):
+        if not await self.data_manager.is_new_bar(self.trading_config.default_symbol, "M1"):
             await asyncio.sleep(1)
             return
 
@@ -356,7 +372,7 @@ class TradingSystem:
             signal_repo = SignalRepository(session)
 
             # Check if we have room for more positions
-            open_trades = await trade_repo.get_open_trades(symbol=settings.default_symbol)
+            open_trades = await trade_repo.get_open_trades(symbol=self.trading_config.default_symbol)
 
             if len(open_trades) >= self.strategy.config.max_positions:
                 logger.debug(
@@ -368,7 +384,7 @@ class TradingSystem:
 
             try:
                 # Generate signal
-                signal = await self.strategy.analyze(settings.default_symbol)
+                signal = await self.strategy.analyze(self.trading_config.default_symbol)
 
                 if not signal:
                     return
@@ -434,7 +450,7 @@ class TradingSystem:
                     entry_price=signal.entry_price,
                     stop_loss=signal.stop_loss,
                     account_balance=self._get_balance(account),
-                    risk_percent=settings.max_risk_per_trade,
+                    risk_percent=self.trading_config.max_risk_per_trade,
                     symbol_info=symbol_info
                 )
 

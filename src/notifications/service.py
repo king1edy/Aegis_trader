@@ -8,7 +8,7 @@ Currently supports Telegram, designed for extensibility.
 
 from typing import Optional, Dict, Any
 
-from core.config import Settings, settings as default_settings
+from core.config import Settings, settings as default_settings  # also accepts TradingConfig
 from core.logging_config import get_logger
 from notifications.telegram import TelegramNotifier
 

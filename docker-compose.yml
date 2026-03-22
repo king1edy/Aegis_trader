@@ -9,37 +9,45 @@ services:
     env_file:
       - .env
     environment:
-      # Override hosts for Docker networking (container names, not localhost)
+      # ── Infrastructure overrides for Docker networking ──────────────────
+      # Container names replace localhost for inter-service communication.
       POSTGRES_HOST: postgres
       REDIS_HOST: redis
-      # Override full URLs since .env has pre-constructed URLs that bypass host settings
       DATABASE_URL: postgresql://${POSTGRES_USER:-trading_user}:${POSTGRES_PASSWORD:-trading_pass}@postgres:5432/${POSTGRES_DB:-trading_db}
       REDIS_URL: redis://redis:6379/0
-      # Use API bridge mode to connect to MT5 running on Windows host
-      BROKER_MODE: bridge
-      MT5_BRIDGE_URL: http://host.docker.internal:8001
-      # EA logging mode — EA runs the strategy, this container logs events
+
+      # ── Runtime mode ───────────────────────────────────────────────────
       EA_MODE: "true"
       EA_LOG_SERVER_HOST: "0.0.0.0"
       EA_LOG_SERVER_PORT: "8000"
       TRADE_LOG_CSV_PATH: "/app/logs/MTFTR_TradeLog.csv"
+
+      # ── Broker bridge (MT5 runs on Windows host) ───────────────────────
+      BROKER_MODE: bridge
+      MT5_BRIDGE_URL: http://host.docker.internal:8001
+
+      # ── Trading settings are loaded from the database (user_settings    ──
+      # ── table) at runtime, NOT from environment variables.              ──
+      # ── The .env values serve only as seed defaults for new users.      ──
     ports:
       - "8000:8000"
     volumes:
       - ./src:/app/src
+      - ./alembic:/app/alembic
+      - ./alembic.ini:/app/alembic.ini
       - ./logs:/app/logs
       - ./data:/app/data
     depends_on:
-      - postgres
-      - redis
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     networks:
       - trading_network
-    # Note: MT5 requires Windows, so for live trading run the MT5 bridge
-    # on Windows: python -m src.execution.mt5_api_bridge
 
   # PostgreSQL with TimescaleDB for time-series data
   postgres:
-    image: timescale/timescaledb:latest-pg15
+    image: timescale/timescaledb:2.14.2-pg15
     container_name: trading_db
     restart: unless-stopped
     environment:
@@ -59,7 +67,7 @@ services:
       timeout: 5s
       retries: 5
 
-  # Redis for caching and real-time state
+  # Redis for rate limiting and real-time state
   redis:
     image: redis:7-alpine
     container_name: trading_redis

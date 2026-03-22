@@ -18,7 +18,7 @@ from typing import Tuple, Optional, TYPE_CHECKING
 from strategies.base_strategy import TradingSignal
 from execution.mt5_connector import AccountInfo
 from database.repository import TradeRepository, PerformanceRepository, SystemRepository
-from core.config import Settings
+from core.config import Settings  # also accepts TradingConfig (duck-typed)
 from core.logging_config import get_logger
 
 if TYPE_CHECKING:

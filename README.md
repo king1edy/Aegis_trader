@@ -4,15 +4,13 @@ A multi-tenant trading journal and strategy execution platform for MetaTrader 5.
 
 ## Purpose
 
-Aegis is a SaaS-ready platform with three tiers:
+Aegis is a SaaS-ready platform with three subscription tiers:
 
 | Tier | Name | Description |
 |------|------|-------------|
-| **Tier 1** | Aegis Journal | EA mode — traders install the EA, Aegis journals and analyzes |
+| **Tier 1** | Aegis Journal | EA mode -- traders install the EA, Aegis journals and analyzes |
 | **Tier 2** | Aegis Pro | Journal + risk management enforcement |
 | **Tier 3** | Aegis Autopilot | Full Python Bridge strategy execution |
-
-**Phase 1 MVP** delivers Tier 1: users register, authenticate, connect their EA via API key, and get an isolated journal + analytics dashboard.
 
 ## Project Structure
 
@@ -20,32 +18,40 @@ Aegis is a SaaS-ready platform with three tiers:
 Aegis_trader/
 ├── alembic/               # Database migrations (Alembic async)
 │   ├── env.py             # Migration environment (reads DB URL from settings)
-│   └── versions/          # 5-step migration chain
+│   └── versions/          # 6-step migration chain (001-006)
 ├── alembic.ini            # Alembic config (sys.path includes src/)
-├── docker-compose.yml     # Container orchestration
-├── Dockerfile             # Application container
+├── docker-compose.yml     # Container orchestration (postgres, redis, app)
+├── Dockerfile             # Application container (entrypoint runs migrations)
 ├── requirements.txt       # Python dependencies
 │
 ├── src/                   # Application root (CWD for uvicorn)
-│   ├── main.py            # FastAPI entry point (module-level app)
+│   ├── main.py            # FastAPI entry point (lifespan, router wiring)
 │   ├── trading_system.py  # TradingSystem class (active trading mode)
-│   ├── auth/              # Authentication (JWT, API keys, user management)
+│   ├── auth/              # Authentication & subscriptions
 │   │   ├── models.py      # User + ApiKey SQLAlchemy models
+│   │   ├── subscription_models.py  # Subscription, UserSettings, RateLimits
 │   │   ├── security.py    # Password hashing (bcrypt), JWT, API key hashing
 │   │   ├── dependencies.py# FastAPI deps: get_current_user, get_tenant_id
-│   │   └── router.py      # POST /api/auth/{register,login}, API key CRUD
-│   ├── core/              # Configuration, logging (structlog + OTEL), exceptions
-│   ├── database/          # SQLAlchemy ORM (13 tables), tenant-scoped repository
+│   │   └── router.py      # Register, login, /me (enriched), API key CRUD
+│   ├── settings/          # Per-user settings management
+│   │   ├── loader.py      # TradingConfig dataclass + DB loader
+│   │   ├── schemas.py     # Pydantic request/response models
+│   │   └── router.py      # GET/PATCH /api/settings, subscription, rate-limits
+│   ├── core/              # Config (env-based), logging (structlog+OTEL), rate limiter
+│   ├── database/          # SQLAlchemy ORM (16 tables), tenant-scoped repository
 │   ├── trade_logging/     # EA event receiver (POST /trade, CSV + DB)
 │   ├── journal/           # MT5 poller, analyzer, dashboard router
 │   ├── execution/         # Broker connectivity (MT5 direct/bridge/paper)
 │   ├── strategies/        # MTFTR strategy, indicators, position manager
 │   ├── risk/              # Risk checker, position sizer, risk monitor
-│   ├── data/              # Market data handling
 │   ├── notifications/     # Telegram alerts
 │   └── backtesting/       # Strategy validation
 │
-├── scripts/               # Database migration & setup verification
+├── scripts/
+│   ├── entrypoint.sh      # Docker entrypoint (migrations + uvicorn)
+│   └── init_db.sql        # PostgreSQL extensions + helper functions
+├── docs/
+│   └── ARCHITECTURE.md    # Full system architecture documentation
 └── tests/                 # Test suites
 ```
 
@@ -55,78 +61,92 @@ Aegis_trader/
 
 - Docker & Docker Compose
 - Python 3.11+ (for local development)
-- PostgreSQL (localhost:5432 or via Docker)
+- PostgreSQL 15+ (localhost:5432 or via Docker)
+- Redis 7+ (for rate limiting)
 - MetaTrader 5 (Windows only, for live trading / poller)
 
-### Setup
+### Docker (recommended)
 
-1. **Clone and configure:**
-   ```bash
-   git clone <repository>
-   cd Aegis_trader
-   cp .env.example .env
-   # Edit .env with your credentials and settings
-   ```
+```bash
+# Start everything (migrations run automatically via entrypoint)
+docker-compose up -d
 
-2. **Install dependencies:**
-   ```bash
-   python -m venv .venv
-   source .venv/bin/activate  # or .venv\Scripts\activate on Windows
-   pip install -r requirements.txt
-   ```
+# Check logs
+docker-compose logs -f trading_app
+```
 
-3. **Run database migrations:**
-   ```bash
-   alembic upgrade head
-   ```
-   This creates all tables (including `users`, `api_keys`) and seeds a default admin user (`admin@aegis.local`). Set `SEED_ADMIN_PASSWORD` env var before running to choose the admin password (default: `changeme123!`).
+The entrypoint script waits for Postgres, runs `alembic upgrade head`, then starts uvicorn. If migrations fail, the app still starts in CSV-only mode.
 
-4. **Start the server:**
-   ```bash
-   cd src && uvicorn main:app --reload
-   ```
+### Local Development
 
-5. **Or use Docker:**
-   ```bash
-   docker-compose up -d
-   ```
+```bash
+# 1. Clone and configure
+git clone <repository>
+cd Aegis_trader
+cp .env.example .env  # Edit with your credentials
+
+# 2. Install dependencies
+python -m venv .venv
+source .venv/bin/activate  # or .venv\Scripts\activate on Windows
+pip install -r requirements.txt
+
+# 3. Run database migrations
+alembic upgrade head
+
+# 4. Start the server
+cd src && uvicorn main:app --reload
+```
 
 ### Running Modes
 
-The system operates in two modes, controlled by the `EA_MODE` environment variable:
-
 | Mode | `EA_MODE` | Description |
 |------|-----------|-------------|
-| **EA mode** | `true` (default) | Passive logging server — receives trade events from the MT5 EA via HTTP POST |
-| **Trading mode** | `false` | Full strategy engine — Python executes the MTFTR strategy via MT5 bridge |
+| **EA mode** | `true` (default) | Passive logging server -- receives trade events from the MT5 EA |
+| **Trading mode** | `false` | Full strategy engine -- Python executes the MTFTR strategy via MT5 bridge |
 
-### Access Points
+## API Endpoints
 
-| Endpoint | Auth | Description |
-|----------|------|-------------|
-| `GET /health` | None | Health check |
-| `GET /` | None (JS handles auth) | Trade journal dashboard |
-| `POST /trade` | API key (`X-API-Key` header) | EA webhook — receives trade events |
-| `GET /trades` | JWT (`Authorization: Bearer`) | Recent trade events |
-| `GET /trades/summary` | JWT | Trade summary stats |
-| `GET /api/journal/*` | JWT | Journal analytics endpoints |
-| `POST /api/auth/register` | None | Create new account |
-| `POST /api/auth/login` | None | Login (returns JWT) |
-| `GET /api/auth/me` | JWT | Current user profile |
-| `POST /api/auth/api-keys` | JWT | Generate EA API key |
-| `GET /api/auth/api-keys` | JWT | List API keys |
-| `DELETE /api/auth/api-keys/{id}` | JWT | Revoke an API key |
+### Public
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /health` | Health check |
+| `GET /` | Trade journal dashboard |
+| `POST /api/auth/register` | Create new account |
+| `POST /api/auth/login` | Login (returns JWT + enriched profile) |
+
+### Authenticated (JWT)
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /api/auth/me` | Current user + subscription + rate limits |
+| `POST /api/auth/api-keys` | Generate EA API key |
+| `GET /api/auth/api-keys` | List API keys |
+| `DELETE /api/auth/api-keys/{id}` | Revoke an API key |
+| `GET /trades` | Recent trade events |
+| `GET /trades/summary` | Trade summary stats |
+| `GET /api/journal/*` | Journal analytics |
+| `GET /api/settings` | Full user settings |
+| `PATCH /api/settings` | Update settings (partial) |
+| `GET /api/settings/subscription` | Subscription details |
+| `GET /api/settings/rate-limits` | Current tier's rate limits |
+
+### EA Webhook (API Key)
+
+| Endpoint | Description |
+|----------|-------------|
+| `POST /trade` | EA webhook -- receives trade events (`X-API-Key` header) |
 
 ## Authentication
 
 ### Multi-Tenant Architecture
 
-Every user is a tenant (`tenant_id == user.id`). All data is isolated per tenant — trades, deals, snapshots, performance metrics, and tags are scoped by `tenant_id` on every query.
+Every user is a tenant (`tenant_id == user.id`). All data is isolated per tenant -- trades, deals, snapshots, performance metrics, and tags are scoped by `tenant_id` on every query.
 
 ### Auth Flows
 
-- **Dashboard (browser)**: JWT via `Authorization: Bearer <token>` — obtained from `POST /api/auth/login`
-- **EA webhook (MT5)**: API key via `X-API-Key: <key>` header — generated from the dashboard or `POST /api/auth/api-keys`
+- **Dashboard (browser)**: JWT via `Authorization: Bearer <token>` -- obtained from `POST /api/auth/login`
+- **EA webhook (MT5)**: API key via `X-API-Key: <key>` header -- generated from the dashboard or `POST /api/auth/api-keys`
 - **Health check**: No authentication required
 
 ### EA Integration
@@ -137,11 +157,62 @@ input string InpFastAPIKey = "";  // Aegis API Key
 // In SendTradeEvent(): add "X-API-Key: " + InpFastAPIKey + "\r\n" to headers
 ```
 
+## Configuration
+
+### Two-Layer Config System
+
+**Layer 1 -- Infrastructure (env-based, `core/config.py`):**
+
+These are server-level settings that don't vary per user.
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `EA_MODE` | EA mode or trading mode | `true` |
+| `JWT_SECRET_KEY` | Secret for signing JWTs | `change-me-in-production...` |
+| `DEFAULT_TENANT_ID` | User UUID for TradingSystem (single-tenant) | None |
+| `POSTGRES_HOST/PORT/DB` | PostgreSQL connection | `localhost:5432/trading_db` |
+| `REDIS_HOST/PORT` | Redis connection | `localhost:6379` |
+| `BROKER_MODE` | Connection mode (auto/direct/bridge/paper) | `auto` |
+| `TELEGRAM_BOT_TOKEN` | Bot token (secret, stays in env) | `""` |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | SigNoz OTLP endpoint | `http://localhost:4318` |
+
+**Layer 2 -- Per-User Trading Config (DB-backed, `settings/loader.py`):**
+
+Trading settings (risk rules, strategy params, notifications, sessions) are stored in the `user_settings` DB table. The `.env` values serve as seed defaults for new users.
+
+```
+Registration → creates user_settings row with column defaults
+Dashboard PATCH /api/settings → updates per-user settings
+TradingSystem.initialize() → get_trading_config(user_id) loads from DB
+```
+
+| DB Column | Maps To | Description |
+|-----------|---------|-------------|
+| `max_daily_drawdown_pct` | `max_drawdown_percent` | DB stores 5.00, config uses 0.05 |
+| `max_lot_size` | `max_lot_size` | Position size cap |
+| `max_open_positions` | `max_open_positions` | Concurrent position limit |
+| `max_daily_trades` | `max_daily_trades` | Daily trade cap |
+| `allowed_symbols` | `default_symbol` | First symbol used as default |
+| `strategy_params` (JSONB) | All `mtftr_*` attrs | Strategy-specific parameters |
+| `telegram_enabled` | `telegram_enabled` | Per-user notification toggle |
+
+### Subscriptions & Rate Limiting
+
+Registration creates a `journal` tier subscription (trialing). Rate limits are enforced by Redis-backed sliding window middleware:
+
+| Tier | API/min | API/day | Webhook/min | Strategies | Accounts |
+|------|---------|---------|-------------|------------|----------|
+| Journal | 30 | 5,000 | 60 | 1 | 1 |
+| Pro | 120 | 20,000 | 300 | 10 | 3 |
+| Autopilot | 300 | 50,000 | 600 | 25 | 5 |
+
+If Redis is unavailable, rate limiting is silently disabled (graceful degradation).
+
 ## Database
 
 ### Migrations (Alembic)
 
-Schema is managed by Alembic. The migration chain:
+Schema is managed by Alembic. In Docker, migrations run automatically via `scripts/entrypoint.sh`.
 
 | Migration | Description |
 |-----------|-------------|
@@ -150,24 +221,22 @@ Schema is managed by Alembic. The migration chain:
 | `003_add_tenant_id` | `tenant_id` (nullable) on 10 tenant-scoped tables |
 | `004_seed_user` | Create admin user, assign orphaned data |
 | `005_tenant_not_null` | Enforce `tenant_id NOT NULL` |
+| `006_subscriptions_settings_ratelimits` | `subscriptions`, `user_settings`, `rate_limits` + seed data |
 
 ```bash
-# Apply all migrations
-alembic upgrade head
-
-# Stamp existing DB without running migrations
-alembic stamp 001_baseline
-
-# View migration history
-alembic history
+alembic upgrade head     # Apply all
+alembic history          # View chain
 ```
 
-### Schema (13 tables)
+### Schema (16 tables)
 
 | Table | Tenant-scoped | Description |
 |-------|:---:|-------------|
-| `users` | — | User accounts |
-| `api_keys` | — | API keys (FK → users) |
+| `users` | -- | User accounts |
+| `api_keys` | -- | API keys (FK -> users) |
+| `subscriptions` | -- | Per-user tier + billing state |
+| `user_settings` | -- | Per-user trading configuration |
+| `rate_limits` | -- | Reference: one row per tier |
 | `trades` | Yes | Complete trade lifecycle records |
 | `partial_closes` | Yes | Partial close events |
 | `trade_modifications` | Yes | SL/TP modification history |
@@ -180,29 +249,6 @@ alembic history
 | `trading_pauses` | Yes | When and why trading was paused |
 | `price_bars` | No | Shared market data |
 
-## Configuration
-
-All configuration is via environment variables. See `.env.example` for the complete list.
-
-### Key Settings
-
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `EA_MODE` | EA mode (passive) or trading mode (active) | `true` |
-| `JWT_SECRET_KEY` | Secret for signing JWTs | `change-me-in-production...` |
-| `JWT_ACCESS_TOKEN_EXPIRE_MINUTES` | JWT token lifetime | `1440` (24h) |
-| `DEFAULT_TENANT_ID` | Tenant UUID for JournalPoller (self-hosted mode) | None (poller disabled) |
-| `MT5_LOGIN` | MT5 account number | Required for trading |
-| `MT5_PASSWORD` | MT5 password | Required for trading |
-| `MT5_SERVER` | Broker server | `Exness-MT5Trial` |
-| `MAX_RISK_PER_TRADE` | Risk per trade (decimal) | `0.01` (1%) |
-| `MAX_DAILY_RISK` | Max daily risk | `0.03` (3%) |
-| `MAX_TRADES_PER_DAY` | Trade limit | `3` |
-| `POSTGRES_HOST` | PostgreSQL host | `localhost` |
-| `POSTGRES_PORT` | PostgreSQL port | `5432` |
-| `POSTGRES_DB` | Database name | `trading_db` |
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | SigNoz OTLP endpoint | `http://localhost:4318` |
-
 ## Behavioral Safeguards
 
 1. **Manual Override Disabled**: By default, no manual trades or modifications
@@ -210,54 +256,14 @@ All configuration is via environment variables. See `.env.example` for the compl
 3. **Daily Loss Limit**: Stops trading when daily loss exceeds threshold
 4. **Drawdown Protection**: Pauses at maximum drawdown level
 5. **Trade Cooldown**: Minimum time between trades
-
-## Development
-
-### Local Setup
-
-```bash
-python -m venv .venv
-source .venv/bin/activate  # or .venv\Scripts\activate on Windows
-pip install -r requirements.txt
-
-# Run migrations
-alembic upgrade head
-
-# Development server (with hot reload)
-cd src && uvicorn main:app --reload
-
-# Or run directly
-cd src && python main.py
-```
-
-### Running Tests
-
-```bash
-pytest tests/ -v
-```
-
-### Code Quality
-
-```bash
-black src/ tests/
-ruff src/ tests/
-mypy src/
-```
+6. **Rate Limiting**: Per-user API rate limits based on subscription tier
 
 ## Monitoring
 
 ### SigNoz Observability
 
-Logs and traces are exported via OpenTelemetry to SigNoz.
+Logs and traces are exported via OpenTelemetry to SigNoz (runs in a separate compose stack).
 
-```bash
-# Clone and start SigNoz
-git clone https://github.com/SigNoz/signoz.git
-cd signoz/deploy
-docker-compose -f docker/clickhouse-setup/docker-compose.yaml up -d
-```
-
-Configure in `.env`:
 ```env
 OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318
 OTEL_SERVICE_NAME=aegis-trading
@@ -267,14 +273,14 @@ OTEL_TRACES_ENABLED=true
 
 ### Telegram Alerts
 
-Configure notifications for trade opens/closes, daily summaries, drawdown warnings, and system errors.
+Per-user notification preferences (trade opens/closes, daily summaries, drawdown warnings) are configured via `PATCH /api/settings`. The bot token stays in `.env` as a secret.
 
 ## Important Notes
 
 1. **Demo First**: Always test thoroughly on demo before live deployment
 2. **Set JWT_SECRET_KEY**: Use `openssl rand -hex 32` in production
-3. **Risk Management**: Never exceed configured risk limits
-4. **Logs**: Review logs regularly to understand system behavior
+3. **Risk Management**: User settings define risk limits; env values are seed defaults only
+4. **Docker Migrations**: The entrypoint auto-runs `alembic upgrade head` on container start
 5. **Backtest**: Validate any strategy changes with comprehensive backtesting
 
 ## License

@@ -17,6 +17,7 @@ from fastapi import Depends, HTTPException, status
 from fastapi.security import APIKeyHeader, OAuth2PasswordBearer
 from jose import JWTError
 from sqlalchemy import select
+from sqlalchemy.orm import selectinload
 
 from auth.security import decode_access_token, hash_api_key
 from database.repository import get_session
@@ -69,7 +70,9 @@ async def get_current_user(token: Optional[str] = Depends(oauth2_scheme)):
 
     async with get_session() as session:
         result = await session.execute(
-            select(User).where(User.id == user_id, User.is_active.is_(True))
+            select(User)
+            .options(selectinload(User.subscription))
+            .where(User.id == user_id, User.is_active.is_(True))
         )
         user = result.scalar_one_or_none()
 

@@ -2,7 +2,13 @@
 Configuration Management
 ========================
 Centralized settings management using Pydantic Settings.
-All configuration is loaded from environment variables with validation.
+
+**Infrastructure** settings (DB, Redis, JWT, EA mode) are loaded from
+environment variables and remain the runtime source of truth.
+
+**Trading** settings (risk rules, strategy params, notifications) exist
+here as *seed defaults* for new users.  At runtime they are loaded from
+the ``user_settings`` DB table via ``settings.loader.get_trading_config``.
 """
 
 from functools import lru_cache
@@ -84,10 +90,11 @@ class Settings(BaseSettings):
     use_mt5: bool = Field(default=False, description="Force using real MT5 connector instead of demo")
     
     # -------------------------------------------------------------------------
-    # Trading Parameters
+    # Trading Parameters  (seed defaults — runtime values come from DB)
+    # See: settings.loader.get_trading_config()
     # -------------------------------------------------------------------------
     default_symbol: str = "XAUUSD"
-    
+
     # Risk Management
     max_risk_per_trade: float = Field(
         default=0.01,
@@ -133,7 +140,7 @@ class Settings(BaseSettings):
     trade_sessions: str = "london,newyork"
 
     # -------------------------------------------------------------------------
-    # MTFTR Strategy Configuration
+    # MTFTR Strategy Configuration  (seed defaults — runtime from DB strategy_params JSONB)
     # -------------------------------------------------------------------------
     # Strategy enable/disable
     mtftr_enabled: bool = True
@@ -196,7 +203,7 @@ class Settings(BaseSettings):
     redis_url: Optional[str] = None
     
     # -------------------------------------------------------------------------
-    # Telegram Notifications
+    # Telegram Notifications  (seed defaults — per-user prefs in DB)
     # -------------------------------------------------------------------------
     telegram_bot_token: str = ""
     telegram_chat_id: str = ""

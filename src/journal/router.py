@@ -266,7 +266,9 @@ _DASHBOARD_HTML = r"""<!DOCTYPE html>
     <span id="hdr-open"    class="text-slate-400">Open: —</span>
     <span id="hdr-today"   class="text-slate-400">Today: —</span>
     <button class="btn btn-ghost text-xs" onclick="refresh()">↻ Refresh</button>
+    <span id="hdr-tier" class="tag-badge text-xs" style="display:none"></span>
     <span id="hdr-user" class="text-slate-400 text-xs"></span>
+    <button id="btn-settings" class="btn btn-ghost text-xs" onclick="openSettings()" style="display:none">Settings</button>
     <button id="btn-logout" class="btn btn-ghost text-xs" onclick="logout()" style="display:none">Logout</button>
   </div>
 </header>
@@ -292,6 +294,52 @@ _DASHBOARD_HTML = r"""<!DOCTYPE html>
       <button class="btn btn-primary w-full mb-3" onclick="doRegister()">Create Account</button>
       <p class="text-xs text-slate-400 text-center">Have an account? <a href="#" class="text-blue-400" onclick="showLogin();return false">Sign In</a></p>
     </div>
+  </div>
+</div>
+
+<!-- ── Settings Modal ───────────────────────────────────────────────────── -->
+<div id="settings-modal" class="fixed inset-0 bg-black/80 z-[100] flex items-center justify-center" style="display:none">
+  <div class="card p-6 w-[32rem] max-h-[80vh] overflow-y-auto">
+    <div class="flex justify-between items-center mb-4">
+      <h2 class="text-lg font-bold text-blue-400">Settings</h2>
+      <button class="text-slate-400 hover:text-slate-200 text-xl" onclick="closeSettings()">&times;</button>
+    </div>
+    <div id="settings-error" class="text-red-400 text-sm mb-3" style="display:none"></div>
+
+    <!-- Risk Rules -->
+    <h3 class="text-xs text-slate-400 uppercase tracking-wide mt-4 mb-2">Risk Rules</h3>
+    <div class="grid grid-cols-2 gap-3 text-xs">
+      <div><label class="text-slate-400">Max Daily Drawdown %</label><input id="set-drawdown" type="number" step="0.01" class="w-full mt-1 p-1.5" /></div>
+      <div><label class="text-slate-400">Max Consecutive Losses</label><input id="set-consec" type="number" class="w-full mt-1 p-1.5" /></div>
+      <div><label class="text-slate-400">Max Lot Size</label><input id="set-lot" type="number" step="0.01" class="w-full mt-1 p-1.5" /></div>
+      <div><label class="text-slate-400">Max Open Positions</label><input id="set-positions" type="number" class="w-full mt-1 p-1.5" /></div>
+      <div><label class="text-slate-400">Max Daily Trades</label><input id="set-daily-trades" type="number" class="w-full mt-1 p-1.5" /></div>
+      <div><label class="text-slate-400">Pause on Rule Breach</label><select id="set-pause" class="w-full mt-1 p-1.5"><option value="true">Yes</option><option value="false">No</option></select></div>
+    </div>
+
+    <!-- Notifications -->
+    <h3 class="text-xs text-slate-400 uppercase tracking-wide mt-4 mb-2">Notifications</h3>
+    <div class="grid grid-cols-2 gap-3 text-xs">
+      <div><label class="text-slate-400">Telegram Chat ID</label><input id="set-tg-chat" type="text" class="w-full mt-1 p-1.5" /></div>
+      <div><label class="text-slate-400">Telegram Enabled</label><select id="set-tg-enabled" class="w-full mt-1 p-1.5"><option value="true">Yes</option><option value="false">No</option></select></div>
+    </div>
+    <div class="grid grid-cols-2 gap-2 text-xs mt-2">
+      <label><input id="set-n-open" type="checkbox" class="mr-1" />Trade Open</label>
+      <label><input id="set-n-close" type="checkbox" class="mr-1" />Trade Close</label>
+      <label><input id="set-n-summary" type="checkbox" class="mr-1" />Daily Summary</label>
+      <label><input id="set-n-risk" type="checkbox" class="mr-1" />Risk Breach</label>
+    </div>
+
+    <!-- MT5 Connection -->
+    <h3 class="text-xs text-slate-400 uppercase tracking-wide mt-4 mb-2">MT5 Connection</h3>
+    <div class="grid grid-cols-2 gap-3 text-xs">
+      <div><label class="text-slate-400">MT5 Login</label><input id="set-mt5-login" type="number" class="w-full mt-1 p-1.5" /></div>
+      <div><label class="text-slate-400">MT5 Server</label><input id="set-mt5-server" type="text" class="w-full mt-1 p-1.5" /></div>
+      <div><label class="text-slate-400">Mode</label><select id="set-mt5-mode" class="w-full mt-1 p-1.5"><option value="ea">EA</option><option value="bridge">Bridge</option></select></div>
+    </div>
+
+    <button class="btn btn-primary w-full mt-5" onclick="saveSettings()">Save Settings</button>
+    <div id="settings-saved" class="text-emerald-400 text-xs text-center mt-2" style="display:none">Settings saved</div>
   </div>
 </div>
 
@@ -709,14 +757,83 @@ async function initDashboard() {
   // Show user info in header
   try {
     const me = await apiFetch('/api/auth/me');
+    window.userProfile = me;
     $('hdr-user').textContent = me.username || me.email;
     $('btn-logout').style.display = '';
+    $('btn-settings').style.display = '';
+
+    // Tier badge
+    if (me.subscription) {
+      const tierEl = $('hdr-tier');
+      const t = me.subscription.tier.toUpperCase();
+      tierEl.textContent = t;
+      tierEl.style.display = '';
+      tierEl.style.background = t === 'AUTOPILOT' ? '#1e3a5f' : t === 'PRO' ? '#2d1b4e' : '#1f2937';
+      tierEl.style.color = t === 'AUTOPILOT' ? '#60a5fa' : t === 'PRO' ? '#a78bfa' : '#94a3b8';
+    }
   } catch(e) { return; } // 401 handled by apiFetch → auth modal shown
 
   await loadTags();
   await populateSymbolFilter();
   await refresh();
   setInterval(loadOpen, 30_000);
+}
+
+// ── Settings modal ─────────────────────────────────────────────────────────
+async function openSettings() {
+  try {
+    const s = await apiFetch('/api/settings');
+    $('set-drawdown').value = s.max_daily_drawdown_pct;
+    $('set-consec').value = s.max_consecutive_losses;
+    $('set-lot').value = s.max_lot_size;
+    $('set-positions').value = s.max_open_positions;
+    $('set-daily-trades').value = s.max_daily_trades;
+    $('set-pause').value = s.pause_on_rule_breach ? 'true' : 'false';
+    $('set-tg-chat').value = s.telegram_chat_id || '';
+    $('set-tg-enabled').value = s.telegram_enabled ? 'true' : 'false';
+    $('set-n-open').checked = s.notify_on_trade_open;
+    $('set-n-close').checked = s.notify_on_trade_close;
+    $('set-n-summary').checked = s.notify_on_daily_summary;
+    $('set-n-risk').checked = s.notify_on_risk_breach;
+    $('set-mt5-login').value = s.mt5_login || '';
+    $('set-mt5-server').value = s.mt5_server || '';
+    $('set-mt5-mode').value = s.mt5_mode;
+    $('settings-saved').style.display = 'none';
+    $('settings-error').style.display = 'none';
+    $('settings-modal').style.display = 'flex';
+  } catch(e) { console.error('Failed to load settings', e); }
+}
+
+function closeSettings() { $('settings-modal').style.display = 'none'; }
+
+async function saveSettings() {
+  const body = {
+    max_daily_drawdown_pct: parseFloat($('set-drawdown').value),
+    max_consecutive_losses: parseInt($('set-consec').value),
+    max_lot_size: parseFloat($('set-lot').value),
+    max_open_positions: parseInt($('set-positions').value),
+    max_daily_trades: parseInt($('set-daily-trades').value),
+    pause_on_rule_breach: $('set-pause').value === 'true',
+    telegram_chat_id: $('set-tg-chat').value || null,
+    telegram_enabled: $('set-tg-enabled').value === 'true',
+    notify_on_trade_open: $('set-n-open').checked,
+    notify_on_trade_close: $('set-n-close').checked,
+    notify_on_daily_summary: $('set-n-summary').checked,
+    notify_on_risk_breach: $('set-n-risk').checked,
+    mt5_login: parseInt($('set-mt5-login').value) || null,
+    mt5_server: $('set-mt5-server').value || null,
+    mt5_mode: $('set-mt5-mode').value,
+  };
+  try {
+    const headers = {'Content-Type':'application/json'};
+    const token = getToken();
+    if (token) headers['Authorization'] = 'Bearer ' + token;
+    const r = await fetch(API + '/api/settings', {method:'PATCH', headers, body:JSON.stringify(body)});
+    if (r.status === 401) { clearToken(); showAuthModal(); return; }
+    if (!r.ok) { const d = await r.json(); const e = $('settings-error'); e.textContent = d.detail||'Save failed'; e.style.display=''; return; }
+    $('settings-saved').style.display = '';
+    setTimeout(() => $('settings-saved').style.display = 'none', 2000);
+  } catch(e) { console.error('Save failed', e); }
 }
 
 (async () => {

@@ -13,7 +13,7 @@ from telegram import Bot
 from telegram.error import TelegramError
 from telegram.constants import ParseMode
 
-from core.config import Settings
+from core.config import Settings  # also accepts TradingConfig (duck-typed)
 from core.logging_config import get_logger
 from notifications.message_formatter import MessageFormatter
 

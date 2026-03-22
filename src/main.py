@@ -33,6 +33,8 @@ from trade_logging.trade_event_server import (
 from auth.router import auth_router
 from journal.router import journal_router
 from journal.poller import JournalPoller
+from settings.router import settings_router
+from core.rate_limiter import RateLimitMiddleware
 
 logger = setup_logging()
 
@@ -124,6 +126,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+app.add_middleware(RateLimitMiddleware)
 
 # Auth routes:        POST /api/auth/register  POST /api/auth/login  GET /api/auth/me  API key CRUD
 app.include_router(auth_router)
@@ -131,6 +134,8 @@ app.include_router(auth_router)
 app.include_router(ea_router)
 # Journal routes:     GET /  GET /api/journal/*
 app.include_router(journal_router)
+# Settings routes:    GET/PATCH /api/settings  GET /api/settings/subscription  GET /api/settings/rate-limits
+app.include_router(settings_router)
 
 
 # ---------------------------------------------------------------------------
