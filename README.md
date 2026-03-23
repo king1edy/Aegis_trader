@@ -106,6 +106,31 @@ The system uses PostgreSQL with TimescaleDB for efficient time-series data:
 - `system_events`: Audit trail
 - `trading_pauses`: When and why trading was paused
 
+## 🌿 Branching Strategy
+
+This repository follows a **three-tier Git branching model** to keep `main` stable and production-ready at all times.
+
+```
+feature/<name>  ──►  dev  ──►  main
+```
+
+| Branch | Role | Direct push |
+|--------|------|-------------|
+| `main` | Production releases | ❌ Blocked – PRs from `dev` only |
+| `dev` | Integration / staging | `king1edy` only |
+| `feature/*`, `fix/*`, `chore/*` | Active development | Any contributor |
+
+### Contributor workflow
+
+1. **Branch from `dev`** – `git checkout -b feature/<name> dev`
+2. **Push your feature branch** – `git push origin feature/<name>`
+3. **Open a PR targeting `dev`** – never target `main` directly
+4. **Release** – `king1edy` opens a `dev → main` PR when a release is ready
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the full guide.
+
+---
+
 ## 🔧 Development
 
 ### Local Setup

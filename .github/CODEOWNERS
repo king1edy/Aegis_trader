@@ -1,0 +1,12 @@
+# CODEOWNERS
+#
+# Code owners are automatically requested for review when a PR changes the
+# files or directories they own.  At least one owner must approve before
+# a PR can be merged (when "Require review from Code Owners" is enabled in
+# the branch protection rule).
+#
+# Syntax: <path-pattern>   <@user-or-team> [<@user-or-team> ...]
+# Docs  : https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+
+# king1edy must review ALL changes – covers every file in the repository
+*   @king1edy
