@@ -110,6 +110,17 @@ def add_trading_context(
     return event_dict
 
 
+def _otel_resource() -> "Resource":
+    """Build an OTel Resource from settings."""
+    attributes: Dict[str, str] = {"service.name": settings.otel_service_name}
+    if settings.otel_resource_attributes:
+        for attr in settings.otel_resource_attributes.split(","):
+            if "=" in attr:
+                key, value = attr.split("=", 1)
+                attributes[key.strip()] = value.strip()
+    return Resource.create(attributes)
+
+
 def setup_otel_logging() -> Optional[logging.Handler]:
     """
     Set up OpenTelemetry logging handler for SigNoz export.
@@ -120,24 +131,11 @@ def setup_otel_logging() -> Optional[logging.Handler]:
     if not _otel_available:
         return None
     
-    # Check if OTEL logging is enabled
-    otel_logs_enabled = os.getenv("OTEL_LOGS_ENABLED", "false").lower() == "true"
-    if not otel_logs_enabled:
+    if not settings.otel_logs_enabled:
         return None
     
-    endpoint = os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4318")
-    service_name = os.getenv("OTEL_SERVICE_NAME", "aegis-trading")
-    resource_attrs = os.getenv("OTEL_RESOURCE_ATTRIBUTES", "")
-    
-    # Parse resource attributes
-    attributes = {"service.name": service_name}
-    if resource_attrs:
-        for attr in resource_attrs.split(","):
-            if "=" in attr:
-                key, value = attr.split("=", 1)
-                attributes[key.strip()] = value.strip()
-    
-    resource = Resource.create(attributes)
+    endpoint = settings.otel_exporter_otlp_endpoint
+    resource = _otel_resource()
     
     # Set up log exporter
     log_exporter = OTLPLogExporter(endpoint=f"{endpoint}/v1/logs")
@@ -154,23 +152,11 @@ def setup_otel_tracing() -> None:
     if not _otel_available:
         return
     
-    otel_traces_enabled = os.getenv("OTEL_TRACES_ENABLED", "false").lower() == "true"
-    if not otel_traces_enabled:
+    if not settings.otel_traces_enabled:
         return
     
-    endpoint = os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4318")
-    service_name = os.getenv("OTEL_SERVICE_NAME", "aegis-trading")
-    resource_attrs = os.getenv("OTEL_RESOURCE_ATTRIBUTES", "")
-    
-    # Parse resource attributes
-    attributes = {"service.name": service_name}
-    if resource_attrs:
-        for attr in resource_attrs.split(","):
-            if "=" in attr:
-                key, value = attr.split("=", 1)
-                attributes[key.strip()] = value.strip()
-    
-    resource = Resource.create(attributes)
+    endpoint = settings.otel_exporter_otlp_endpoint
+    resource = _otel_resource()
     
     # Set up tracer provider
     tracer_provider = TracerProvider(resource=resource)
@@ -267,6 +253,7 @@ def setup_logging(
     otel_handler = setup_otel_logging()
     if otel_handler:
         handlers.append(otel_handler)
+        print(f"[otel] Log export enabled → {settings.otel_exporter_otlp_endpoint}/v1/logs")
     
     # Set up OpenTelemetry tracing
     setup_otel_tracing()

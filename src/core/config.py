@@ -12,6 +12,7 @@ the ``user_settings`` DB table via ``settings.loader.get_trading_config``.
 """
 
 from functools import lru_cache
+from pathlib import Path
 from typing import List, Optional
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -41,7 +42,7 @@ class Settings(BaseSettings):
     """
     
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=Path(__file__).resolve().parents[2] / ".env",
         env_file_encoding="utf-8",
         case_sensitive=False,
         extra="ignore"
@@ -249,6 +250,20 @@ class Settings(BaseSettings):
     grafana_password: str = "admin"
     enable_metrics: bool = True
     metrics_port: int = 9100
+
+    # -------------------------------------------------------------------------
+    # OpenTelemetry / SigNoz
+    # -------------------------------------------------------------------------
+    otel_exporter_otlp_endpoint: str = Field(
+        default="http://localhost:4318",
+        description="OTLP HTTP endpoint for SigNoz",
+    )
+    otel_exporter_otlp_protocol: str = "http/protobuf"
+    otel_service_name: str = "aegis-trading"
+    otel_resource_attributes: str = "deployment.environment=development"
+    otel_logs_enabled: bool = False
+    otel_traces_enabled: bool = False
+    otel_metrics_enabled: bool = False
     
     # -------------------------------------------------------------------------
     # Behavioral Safeguards
@@ -309,8 +324,9 @@ class Settings(BaseSettings):
         """Get the database URL, constructing it if not provided."""
         if self.database_url:
             return self.database_url
+        from urllib.parse import quote_plus
         return (
-            f"postgresql://{self.postgres_user}:{self.postgres_password}"
+            f"postgresql://{quote_plus(self.postgres_user)}:{quote_plus(self.postgres_password)}"
             f"@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
         )
     
