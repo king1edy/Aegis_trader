@@ -159,7 +159,7 @@ class MTFTRStrategy(BaseStrategy):
 
     async def get_required_timeframes(self) -> List[str]:
         """Get required timeframes"""
-        return ["H4", "H1", "M15"]
+        return ["H4", "H1", "M1"]
 
     async def analyze(self, symbol: str) -> Optional[TradingSignal]:
         """
@@ -181,12 +181,12 @@ class MTFTRStrategy(BaseStrategy):
                 )
                 return None
 
-            # 2. Check for new 15M bar (CRITICAL - prevents duplicate signals)
-            if not await self.data_manager.is_new_bar(symbol, "M15"):
+            # 2. Check for new M1 bar (CRITICAL - prevents duplicate signals)
+            if not await self.data_manager.is_new_bar(symbol, "M1"):
                 return None
 
             logger.info(
-                "New 15M bar detected - starting analysis",
+                "New M1 bar detected - starting analysis",
                 symbol=symbol,
                 session=session
             )
@@ -194,18 +194,18 @@ class MTFTRStrategy(BaseStrategy):
             # 3. Fetch multi-timeframe data
             await self.data_manager.update_all_timeframes(
                 symbol,
-                ["H4", "H1", "M15"],
+                ["H4", "H1", "M1"],
                 count=500
             )
 
             df_h4 = await self.data_manager.get_data(symbol, "H4", count=250)
             df_h1 = await self.data_manager.get_data(symbol, "H1", count=200)
-            df_m15 = await self.data_manager.get_data(symbol, "M15", count=500)
+            df_m1 = await self.data_manager.get_data(symbol, "M1", count=500)
 
             # 4. Calculate indicators
             df_h4 = self.indicator_calc.calculate_all(df_h4, self.indicator_config)
             df_h1 = self.indicator_calc.calculate_all(df_h1, self.indicator_config)
-            df_m15 = self.indicator_calc.calculate_all(df_m15, self.indicator_config)
+            df_m1 = self.indicator_calc.calculate_all(df_m1, self.indicator_config)
 
             # 5. Analyze 4H trend
             h4_trend = await self.analyze_4h_trend(df_h4)
@@ -233,7 +233,7 @@ class MTFTRStrategy(BaseStrategy):
             )
 
             # 7. Look for 15M entry
-            entry_signal = await self.find_15m_entry(df_m15, h4_trend)
+            entry_signal = await self.find_15m_entry(df_m1, h4_trend)
             if not entry_signal:
                 logger.debug("No 15M entry trigger found")
                 return None
@@ -276,15 +276,15 @@ class MTFTRStrategy(BaseStrategy):
                     "h4_hull_55": float(df_h4.iloc[-1]['hull_55']),
                     "h1_ema_50": float(df_h1.iloc[-1]['ema_50']),
                     "h1_hull_34": float(df_h1.iloc[-1]['hull_34']),
-                    "m15_ema_21": float(df_m15.iloc[-1]['ema_21']),
-                    "m15_rsi": float(df_m15.iloc[-1]['rsi']),
-                    "m15_atr": float(df_m15.iloc[-1]['atr']),
+                    "m15_ema_21": float(df_m1.iloc[-1]['ema_21']),
+                    "m15_rsi": float(df_m1.iloc[-1]['rsi']),
+                    "m15_atr": float(df_m1.iloc[-1]['atr']),
                     "session": session,
                     "candle_pattern": entry_signal.candle_pattern
                 },
                 strategy_data={
                     "trigger_type": entry_signal.trigger_type,
-                    "sl_distance_atr": sl_distance / float(df_m15.iloc[-1]['atr']),
+                    "sl_distance_atr": sl_distance / float(df_m1.iloc[-1]['atr']),
                     "rr_tp1": self.config.tp1_rr,
                     "rr_tp2": self.config.tp2_rr
                 }
@@ -746,7 +746,7 @@ class MTFTRStrategy(BaseStrategy):
         """Get strategy information"""
         return {
             **super().get_info(),
-            "required_timeframes": ["H4", "H1", "M15"],
+            "required_timeframes": ["H4", "H1", "M1"],
             "indicators": {
                 "ema_200": self.config.ema_200,
                 "ema_50": self.config.ema_50,

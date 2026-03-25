@@ -1,0 +1,18 @@
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+markers = [
+    "unit: Pure logic tests with no external dependencies",
+    "integration: Tests involving multiple components or mocked I/O",
+    "backtest_validation: Tests verifying backtesting engine correctness and reproducibility",
+    "smoke: Quick sanity checks that core modules are importable",
+]
+
+[tool.coverage.run]
+source = ["src"]
+omit = ["src/main.py"]
+
+[tool.coverage.report]
+show_missing = true
+skip_empty = true

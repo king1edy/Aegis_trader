@@ -13,13 +13,16 @@ Enforces:
 
 from datetime import datetime, timezone
 from decimal import Decimal
-from typing import Tuple, Optional
+from typing import Tuple, Optional, TYPE_CHECKING
 
 from src.strategies.base_strategy import TradingSignal
 from src.execution.mt5_connector import AccountInfo
 from src.database.repository import TradeRepository, PerformanceRepository, SystemRepository
 from src.core.config import Settings
 from src.core.logging_config import get_logger
+
+if TYPE_CHECKING:
+    from src.notifications import NotificationService
 
 logger = get_logger("risk_checker")
 
@@ -45,7 +48,8 @@ class RiskChecker:
         settings: Settings,
         trade_repo: TradeRepository,
         perf_repo: PerformanceRepository,
-        system_repo: SystemRepository
+        system_repo: SystemRepository,
+        notifier: Optional["NotificationService"] = None
     ):
         """
         Initialize risk checker.
@@ -55,11 +59,13 @@ class RiskChecker:
             trade_repo: Trade repository
             perf_repo: Performance repository
             system_repo: System events repository
+            notifier: Notification service (optional)
         """
         self.settings = settings
         self.trade_repo = trade_repo
         self.perf_repo = perf_repo
         self.system_repo = system_repo
+        self.notifier = notifier
 
         logger.info(
             "Risk checker initialized",
@@ -244,8 +250,28 @@ class RiskChecker:
                     was_automatic=True,
                     notes=f"Daily loss: ${daily_pnl:.2f} ({daily_loss_percent:.2f}%)"
                 )
+                
+                # Send risk warning notification
+                if self.notifier and self.notifier.is_enabled:
+                    await self.notifier.notify_risk_warning(
+                        warning_type="daily_loss",
+                        current_value=daily_loss_percent,
+                        limit_value=max_loss_percent,
+                        additional_info=f"LIMIT HIT! Trading paused. Daily loss: ${abs(daily_pnl):.2f}"
+                    )
 
                 return False, f"Daily loss limit exceeded: {daily_loss_percent:.2f}% (limit: {max_loss_percent}%)"
+            
+            # Warn if approaching limit (80% of max)
+            elif daily_pnl < 0 and daily_loss_percent >= (max_loss_percent * 0.8):
+                # Send warning notification
+                if self.notifier and self.notifier.is_enabled:
+                    await self.notifier.notify_risk_warning(
+                        warning_type="daily_loss",
+                        current_value=daily_loss_percent,
+                        limit_value=max_loss_percent,
+                        additional_info=f"Approaching daily loss limit. Current loss: ${abs(daily_pnl):.2f}"
+                    )
 
         logger.debug("Daily loss check passed")
         return True, None
@@ -282,8 +308,28 @@ class RiskChecker:
                 was_automatic=True,
                 notes=f"Drawdown: ${float(drawdown_amount):.2f} ({float(drawdown_percent):.2f}%)"
             )
+            
+            # Send risk warning notification
+            if self.notifier and self.notifier.is_enabled:
+                await self.notifier.notify_risk_warning(
+                    warning_type="drawdown",
+                    current_value=float(drawdown_percent),
+                    limit_value=max_dd_percent,
+                    additional_info=f"LIMIT HIT! Trading paused. Drawdown: ${float(drawdown_amount):.2f}"
+                )
 
             return False, f"Max drawdown exceeded: {float(drawdown_percent):.2f}% (limit: {max_dd_percent}%)"
+        
+        # Warn if approaching limit (80% of max)
+        elif drawdown_percent >= Decimal(str(max_dd_percent * 0.8)):
+            # Send warning notification
+            if self.notifier and self.notifier.is_enabled:
+                await self.notifier.notify_risk_warning(
+                    warning_type="drawdown",
+                    current_value=float(drawdown_percent),
+                    limit_value=max_dd_percent,
+                    additional_info=f"Approaching max drawdown limit. Consider reducing position sizes."
+                )
 
         logger.debug(
             "Drawdown check passed",
@@ -317,6 +363,15 @@ class RiskChecker:
                 was_automatic=True,
                 notes=f"{consecutive_losses} consecutive losses"
             )
+            
+            # Send risk warning notification
+            if self.notifier and self.notifier.is_enabled:
+                await self.notifier.notify_risk_warning(
+                    warning_type="consecutive_losses",
+                    current_value=float(consecutive_losses),
+                    limit_value=float(max_consecutive),
+                    additional_info=f"LIMIT HIT! Trading paused. {consecutive_losses} consecutive losses."
+                )
 
             return False, f"Max consecutive losses reached: {consecutive_losses} (limit: {max_consecutive})"
 

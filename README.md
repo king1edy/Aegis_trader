@@ -16,7 +16,6 @@ trading_system/
 ├── Dockerfile              # Application container
 ├── requirements.txt        # Python dependencies
 ├── .env.example            # Environment template
-├── prometheus.yml          # Metrics configuration
 │
 ├── src/
 │   ├── main.py            # Application entry point
@@ -31,8 +30,7 @@ trading_system/
 │   └── backtesting/       # Strategy validation
 │
 ├── scripts/               # Database & utility scripts
-├── tests/                 # Test suites
-└── dashboards/            # Grafana dashboards
+└── tests/                 # Test suites
 ```
 
 ## 🚀 Quick Start
@@ -65,9 +63,8 @@ trading_system/
 
 ### Access Points
 
-- **Grafana Dashboard**: http://localhost:3000
-- **Prometheus**: http://localhost:9090
-- **API (when implemented)**: http://localhost:8000
+- **SigNoz Dashboard**: http://localhost:3301 (separate Docker stack)
+- **API**: http://localhost:8000
 
 ## ⚙️ Configuration
 
@@ -84,6 +81,9 @@ All configuration is via environment variables. See `.env.example` for the compl
 | `MAX_DAILY_RISK` | Max daily risk | 0.03 (3%) |
 | `MAX_TRADES_PER_DAY` | Trade limit | 3 |
 | `ENABLE_MANUAL_OVERRIDE` | Allow manual intervention | false |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | SigNoz OTLP endpoint | http://localhost:4318 |
+| `OTEL_LOGS_ENABLED` | Export logs to SigNoz | true |
+| `OTEL_TRACES_ENABLED` | Export traces to SigNoz | true |
 
 ## 🛡️ Behavioral Safeguards
 
@@ -105,6 +105,31 @@ The system uses PostgreSQL with TimescaleDB for efficient time-series data:
 - `daily_performance`: Aggregated daily metrics
 - `system_events`: Audit trail
 - `trading_pauses`: When and why trading was paused
+
+## 🌿 Branching Strategy
+
+This repository follows a **three-tier Git branching model** to keep `main` stable and production-ready at all times.
+
+```
+feature/<name>  ──►  dev  ──►  main
+```
+
+| Branch | Role | Direct push |
+|--------|------|-------------|
+| `main` | Production releases | ❌ Blocked – PRs from `dev` only |
+| `dev` | Integration / staging | `king1edy` only |
+| `feature/*`, `fix/*`, `chore/*` | Active development | Any contributor |
+
+### Contributor workflow
+
+1. **Branch from `dev`** – `git checkout -b feature/<name> dev`
+2. **Push your feature branch** – `git push origin feature/<name>`
+3. **Open a PR targeting `dev`** – never target `main` directly
+4. **Release** – `king1edy` opens a `dev → main` PR when a release is ready
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the full guide.
+
+---
 
 ## 🔧 Development
 
@@ -143,14 +168,32 @@ mypy src/
 
 ## 📈 Monitoring
 
-### Grafana Dashboard
+### SigNoz Observability
 
-The included Grafana dashboard shows:
-- Account balance/equity over time
-- Win rate and profit factor
-- Trade distribution by strategy
-- Drawdown tracking
-- System health metrics
+The system uses SigNoz for observability, which runs in a separate Docker Compose stack. Logs and traces are exported via OpenTelemetry.
+
+**Setup SigNoz:**
+```bash
+# Clone SigNoz
+git clone https://github.com/SigNoz/signoz.git
+cd signoz/deploy
+docker-compose -f docker/clickhouse-setup/docker-compose.yaml up -d
+```
+
+**Configure (in .env):**
+```env
+OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318
+OTEL_SERVICE_NAME=aegis-trading
+OTEL_LOGS_ENABLED=true
+OTEL_TRACES_ENABLED=true
+OTEL_METRICS_ENABLED=true
+```
+
+SigNoz provides:
+- Distributed tracing for trade execution flows
+- Centralized log aggregation with search
+- Metrics dashboards
+- Alerting capabilities
 
 ### Alerts
 
@@ -184,7 +227,7 @@ Configure Telegram notifications for:
 - Order execution engine
 - Trade lifecycle management
 - Telegram notifications
-- Grafana dashboard
+- SigNoz observability
 
 ### Phase 5: Backtesting
 - Historical data pipeline

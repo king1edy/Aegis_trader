@@ -203,6 +203,7 @@ class Settings(BaseSettings):
     telegram_enabled: bool = False
     notify_on_trade_open: bool = True
     notify_on_trade_close: bool = True
+    notify_on_signal_generated: bool = True
     notify_on_daily_summary: bool = True
     notify_on_error: bool = True
     notify_on_drawdown_warning: bool = True
@@ -235,6 +236,38 @@ class Settings(BaseSettings):
     max_consecutive_losses: int = Field(default=3, ge=1, le=10)
     pause_duration_hours: int = Field(default=4, ge=1, le=24)
     
+    # -------------------------------------------------------------------------
+    # EA Logging Mode
+    # -------------------------------------------------------------------------
+    ea_mode: bool = Field(
+        default=False,
+        description="Run as EA event logging receiver instead of executing strategy directly",
+    )
+    ea_log_server_host: str = Field(
+        default="127.0.0.1",
+        description="Host the EA logging server binds to",
+    )
+    ea_log_server_port: int = Field(
+        default=8000,
+        description="Port the EA logging server listens on",
+    )
+    trade_log_csv_path: str = Field(
+        default="logs/MTFTR_TradeLog.csv",
+        description="Path for the trade event CSV journal",
+    )
+
+    # -------------------------------------------------------------------------
+    # Trade Journal (MT5 polling for manual trades)
+    # -------------------------------------------------------------------------
+    journal_poll_interval_seconds: int = Field(
+        default=30,
+        description="How often (seconds) the MT5 poller checks for new positions and deals",
+    )
+    journal_history_days: int = Field(
+        default=90,
+        description="How many days of trade history to backfill on first run",
+    )
+
     # -------------------------------------------------------------------------
     # Backtesting
     # -------------------------------------------------------------------------

@@ -65,7 +65,12 @@ async def _create_direct_broker(settings: Settings):
     
     try:
         from src.execution.mt5_connector import MT5Connector
-        broker = MT5Connector(settings)
+        broker = MT5Connector(
+            login=settings.mt5_login,
+            password=settings.mt5_password,
+            server=settings.mt5_server,
+            path=settings.mt5_path
+        )
         logger.info("Created direct MT5 connector")
         return broker
     except ImportError as e:
@@ -133,7 +138,12 @@ async def _auto_select_broker(settings: Settings):
             import MetaTrader5
             from src.execution.mt5_connector import MT5Connector
             
-            broker = MT5Connector(settings)
+            broker = MT5Connector(
+                login=settings.mt5_login,
+                password=settings.mt5_password,
+                server=settings.mt5_server,
+                path=settings.mt5_path
+            )
             logger.info("Auto-selected: Direct MT5 connector (Windows)")
             return broker
             
