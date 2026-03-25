@@ -4,7 +4,11 @@
       "Bash(git add:*)",
       "Bash(dir \"data\\\\history\\\\XAUUSD\"\" 2>nul || echo \"Directory not found \")",
       "Bash(dir:*)",
-      "Bash(python:*)"
+      "Bash(python:*)",
+      "Bash(python -c \":*)",
+      "Bash(curl -s http://127.0.0.1:8000/health)",
+      "Bash(curl -s \"http://127.0.0.1:8000/trades/summary\")",
+      "Bash(taskkill //F //IM python.exe)"
     ]
   }
 }

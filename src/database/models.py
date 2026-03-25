@@ -12,6 +12,7 @@ from typing import Optional
 from uuid import uuid4
 
 from sqlalchemy import (
+    BigInteger,
     Boolean,
     Column,
     DateTime,
@@ -157,16 +158,34 @@ class Trade(Base):
     # Behavioral tracking
     was_manual_intervention = Column(Boolean, default=False)
     intervention_notes = Column(Text, nullable=True)
-    
+
+    # ── Journal fields ────────────────────────────────────────────────────────
+    # User annotations
+    setup_tag     = Column(String(100), nullable=True, index=True)
+    journal_notes = Column(Text, nullable=True)
+
+    # Computed context (populated by MT5 poller for manual trades;
+    # EA trades already carry session inside market_context JSON)
+    trading_session = Column(String(20), nullable=True, index=True)  # London/New_York/Asian/Off-Hours
+    hour_of_day     = Column(Integer, nullable=True)   # 0–23 UTC entry hour
+    day_of_week     = Column(Integer, nullable=True)   # 0=Mon … 6=Sun
+
+    # Manual trade tracking
+    mt5_position_id = Column(BigInteger, nullable=True, index=True)  # MT5 internal position ID
+    trade_source    = Column(String(20), nullable=True, default="ea")  # "ea" | "manual"
+
     # Relationships
     partial_closes = relationship("PartialClose", back_populates="trade", cascade="all, delete-orphan")
     modifications = relationship("TradeModification", back_populates="trade", cascade="all, delete-orphan")
-    
+
     # Indexes for common queries
     __table_args__ = (
         Index("ix_trades_symbol_status", "symbol", "status"),
         Index("ix_trades_entry_time", "entry_time"),
         Index("ix_trades_strategy", "strategy_name", "signal_time"),
+        Index("ix_trades_session", "trading_session"),
+        Index("ix_trades_setup_tag", "setup_tag"),
+        Index("ix_trades_mt5_pos", "mt5_position_id"),
     )
     
     def __repr__(self) -> str:
@@ -439,3 +458,85 @@ class Signal(Base):
     __table_args__ = (
         Index("ix_signals_strategy_time", "strategy_name", "timestamp"),
     )
+
+
+# =============================================================================
+# Journal Models
+# =============================================================================
+
+class JournalDeal(Base):
+    """
+    Raw MT5 deal records — full audit trail for every account transaction.
+
+    Populated by the MT5 poller (manual trades) and cross-referenced with
+    EA events. Every position open/close, partial fill, commission and swap
+    is stored here for complete reproducibility.
+    """
+    __tablename__ = "journal_deals"
+
+    id              = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+
+    # MT5 identifiers
+    deal_id         = Column(BigInteger, unique=True, nullable=False)   # mt5 deal ticket
+    position_id     = Column(BigInteger, nullable=False, index=True)    # groups IN + OUT deals
+    order_id        = Column(BigInteger, nullable=True)                  # originating order
+
+    # Deal details
+    symbol          = Column(String(20), nullable=False)
+    deal_time       = Column(DateTime(timezone=True), nullable=False)
+    deal_type       = Column(String(10), nullable=False)    # BUY | SELL
+    entry_type      = Column(String(10), nullable=False)    # IN | OUT | OUT_BY
+    volume          = Column(Numeric(8, 2), nullable=False)
+    price           = Column(Numeric(12, 5), nullable=False)
+
+    # Costs and P&L
+    commission      = Column(Numeric(10, 4), nullable=True)
+    swap            = Column(Numeric(10, 4), nullable=True)
+    profit          = Column(Numeric(12, 2), nullable=True)
+
+    # Exit classification
+    exit_reason     = Column(String(20), nullable=True)     # SL | TP | MANUAL | STOP_OUT | MOBILE | WEB
+    comment         = Column(String(200), nullable=True)
+    raw_reason_code = Column(Integer, nullable=True)        # MT5's deal.reason integer
+
+    created_at      = Column(DateTime(timezone=True), server_default=func.now())
+
+    __table_args__ = (
+        Index("ix_journal_deals_time", "deal_time"),
+        Index("ix_journal_deals_symbol", "symbol"),
+    )
+
+    def __repr__(self) -> str:
+        return f"<JournalDeal {self.deal_id} {self.symbol} {self.entry_type} {self.profit}>"
+
+
+class SetupTag(Base):
+    """
+    User-defined trade setup categories for journaling.
+
+    Pre-seeded with common setups on first run; users can add their own
+    via POST /api/journal/tags.
+    """
+    __tablename__ = "setup_tags"
+
+    id          = Column(Integer, primary_key=True, autoincrement=True)
+    name        = Column(String(100), unique=True, nullable=False)
+    color       = Column(String(7), default="#3B82F6")   # hex colour for UI badge
+    description = Column(Text, nullable=True)
+    created_at  = Column(DateTime(timezone=True), server_default=func.now())
+
+    def __repr__(self) -> str:
+        return f"<SetupTag {self.name}>"
+
+
+# Default setup tags seeded on startup
+DEFAULT_SETUP_TAGS = [
+    {"name": "EMA Bounce",          "color": "#3B82F6", "description": "Price bounces off an EMA level"},
+    {"name": "Break & Retest",      "color": "#8B5CF6", "description": "Structure break followed by retest"},
+    {"name": "Support/Resistance",  "color": "#F59E0B", "description": "Key S/R level reaction"},
+    {"name": "Trend Continuation",  "color": "#10B981", "description": "Pullback entry in direction of trend"},
+    {"name": "Reversal",            "color": "#EF4444", "description": "Counter-trend reversal setup"},
+    {"name": "Liquidity Grab",      "color": "#EC4899", "description": "Stop hunt / liquidity sweep then reversal"},
+    {"name": "News Trade",          "color": "#F97316", "description": "Trade around high-impact news event"},
+    {"name": "Other",               "color": "#6B7280", "description": "Miscellaneous / unclassified setup"},
+]

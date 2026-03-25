@@ -3,9 +3,11 @@ Logging Configuration
 =====================
 Structured logging setup using structlog for consistent, parseable logs.
 All logs include context like trade IDs, symbols, and timestamps.
+Supports export to SigNoz via OpenTelemetry.
 """
 
 import logging
+import os
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -15,6 +17,21 @@ import structlog
 from structlog.types import EventDict, Processor
 
 from src.core.config import settings
+
+# OpenTelemetry imports for SigNoz integration
+_otel_available = False
+try:
+    from opentelemetry import trace
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export import BatchSpanProcessor
+    from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+    from opentelemetry.sdk.resources import Resource
+    from opentelemetry.sdk._logs import LoggerProvider, LoggingHandler
+    from opentelemetry.sdk._logs.export import BatchLogRecordProcessor
+    from opentelemetry.exporter.otlp.proto.http._log_exporter import OTLPLogExporter
+    _otel_available = True
+except ImportError:
+    pass
 
 
 def add_timestamp(
@@ -93,6 +110,90 @@ def add_trading_context(
     return event_dict
 
 
+def setup_otel_logging() -> Optional[logging.Handler]:
+    """
+    Set up OpenTelemetry logging handler for SigNoz export.
+    
+    Returns:
+        OpenTelemetry logging handler if configured, None otherwise.
+    """
+    if not _otel_available:
+        return None
+    
+    # Check if OTEL logging is enabled
+    otel_logs_enabled = os.getenv("OTEL_LOGS_ENABLED", "false").lower() == "true"
+    if not otel_logs_enabled:
+        return None
+    
+    endpoint = os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4318")
+    service_name = os.getenv("OTEL_SERVICE_NAME", "aegis-trading")
+    resource_attrs = os.getenv("OTEL_RESOURCE_ATTRIBUTES", "")
+    
+    # Parse resource attributes
+    attributes = {"service.name": service_name}
+    if resource_attrs:
+        for attr in resource_attrs.split(","):
+            if "=" in attr:
+                key, value = attr.split("=", 1)
+                attributes[key.strip()] = value.strip()
+    
+    resource = Resource.create(attributes)
+    
+    # Set up log exporter
+    log_exporter = OTLPLogExporter(endpoint=f"{endpoint}/v1/logs")
+    logger_provider = LoggerProvider(resource=resource)
+    logger_provider.add_log_record_processor(BatchLogRecordProcessor(log_exporter))
+    
+    # Create handler
+    otel_handler = LoggingHandler(logger_provider=logger_provider)
+    return otel_handler
+
+
+def setup_otel_tracing() -> None:
+    """Set up OpenTelemetry tracing for SigNoz export."""
+    if not _otel_available:
+        return
+    
+    otel_traces_enabled = os.getenv("OTEL_TRACES_ENABLED", "false").lower() == "true"
+    if not otel_traces_enabled:
+        return
+    
+    endpoint = os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4318")
+    service_name = os.getenv("OTEL_SERVICE_NAME", "aegis-trading")
+    resource_attrs = os.getenv("OTEL_RESOURCE_ATTRIBUTES", "")
+    
+    # Parse resource attributes
+    attributes = {"service.name": service_name}
+    if resource_attrs:
+        for attr in resource_attrs.split(","):
+            if "=" in attr:
+                key, value = attr.split("=", 1)
+                attributes[key.strip()] = value.strip()
+    
+    resource = Resource.create(attributes)
+    
+    # Set up tracer provider
+    tracer_provider = TracerProvider(resource=resource)
+    span_exporter = OTLPSpanExporter(endpoint=f"{endpoint}/v1/traces")
+    tracer_provider.add_span_processor(BatchSpanProcessor(span_exporter))
+    trace.set_tracer_provider(tracer_provider)
+
+
+def get_tracer(name: str = "aegis-trading") -> Optional[Any]:
+    """
+    Get an OpenTelemetry tracer for manual span creation.
+    
+    Args:
+        name: Name for the tracer (usually module/component name)
+    
+    Returns:
+        OpenTelemetry tracer if available, None otherwise
+    """
+    if not _otel_available:
+        return None
+    return trace.get_tracer(name)
+
+
 def setup_logging(
     log_level: Optional[str] = None,
     log_file: Optional[Path] = None,
@@ -161,6 +262,14 @@ def setup_logging(
         file_handler = logging.FileHandler(log_file)
         file_handler.setFormatter(formatter)
         handlers.append(file_handler)
+    
+    # OpenTelemetry handler for SigNoz (optional)
+    otel_handler = setup_otel_logging()
+    if otel_handler:
+        handlers.append(otel_handler)
+    
+    # Set up OpenTelemetry tracing
+    setup_otel_tracing()
     
     # Configure root logger
     root_logger = logging.getLogger()
