@@ -1,93 +1,255 @@
-# Trading Automation System
+# Aegis Trading Platform
 
-A professional-grade automated trading system for XAUUSD using MetaTrader 5.
+A multi-tenant trading journal and strategy execution platform for MetaTrader 5.
 
-## 🎯 Purpose
+## Purpose
 
-This system is designed to remove manual intervention from trading entirely. The primary goal is consistent, disciplined execution of proven strategies without emotional interference.
+Aegis is a SaaS-ready platform with three subscription tiers:
 
-**Key Principle**: The system should be trusted completely. Manual overrides are disabled by default because historical data shows that automated execution consistently outperforms manual interventions.
+| Tier | Name | Description |
+|------|------|-------------|
+| **Tier 1** | Aegis Journal | EA mode -- traders install the EA, Aegis journals and analyzes |
+| **Tier 2** | Aegis Pro | Journal + risk management enforcement |
+| **Tier 3** | Aegis Autopilot | Full Python Bridge strategy execution |
 
-## 📁 Project Structure
+## Project Structure
 
 ```
-trading_system/
-├── docker-compose.yml      # Container orchestration
-├── Dockerfile              # Application container
-├── requirements.txt        # Python dependencies
-├── .env.example            # Environment template
+Aegis_trader/
+├── alembic/               # Database migrations (Alembic async)
+│   ├── env.py             # Migration environment (reads DB URL from settings)
+│   └── versions/          # 6-step migration chain (001-006)
+├── alembic.ini            # Alembic config (sys.path includes src/)
+├── docker-compose.yml     # Container orchestration (postgres, redis, app)
+├── Dockerfile             # Application container (entrypoint runs migrations)
+├── requirements.txt       # Python dependencies
 │
-├── src/
-│   ├── main.py            # Application entry point
-│   ├── core/              # Configuration, logging, exceptions
-│   ├── database/          # Models and data access
-│   ├── execution/         # Broker connectivity (MT5)
-│   ├── strategies/        # Trading strategies
-│   ├── risk/              # Risk management
-│   ├── data/              # Market data handling
-│   ├── api/               # REST API & webhooks
+├── src/                   # Application root (CWD for uvicorn)
+│   ├── main.py            # FastAPI entry point (lifespan, router wiring)
+│   ├── trading_system.py  # TradingSystem class (active trading mode)
+│   ├── auth/              # Authentication & subscriptions
+│   │   ├── models.py      # User + ApiKey SQLAlchemy models
+│   │   ├── subscription_models.py  # Subscription, UserSettings, RateLimits
+│   │   ├── security.py    # Password hashing (bcrypt), JWT, API key hashing
+│   │   ├── dependencies.py# FastAPI deps: get_current_user, get_tenant_id
+│   │   └── router.py      # Register, login, /me (enriched), API key CRUD
+│   ├── settings/          # Per-user settings management
+│   │   ├── loader.py      # TradingConfig dataclass + DB loader
+│   │   ├── schemas.py     # Pydantic request/response models
+│   │   └── router.py      # GET/PATCH /api/settings, subscription, rate-limits
+│   ├── core/              # Config (env-based), logging (structlog+OTEL), rate limiter
+│   ├── database/          # SQLAlchemy ORM (16 tables), tenant-scoped repository
+│   ├── trade_logging/     # EA event receiver (POST /trade, CSV + DB)
+│   ├── journal/           # MT5 poller, analyzer, dashboard router
+│   ├── execution/         # Broker connectivity (MT5 direct/bridge/paper)
+│   ├── strategies/        # MTFTR strategy, indicators, position manager
+│   ├── risk/              # Risk checker, position sizer, risk monitor
 │   ├── notifications/     # Telegram alerts
 │   └── backtesting/       # Strategy validation
 │
-├── scripts/               # Database & utility scripts
+├── scripts/
+│   ├── entrypoint.sh      # Docker entrypoint (migrations + uvicorn)
+│   └── init_db.sql        # PostgreSQL extensions + helper functions
+├── docs/
+│   └── ARCHITECTURE.md    # Full system architecture documentation
 └── tests/                 # Test suites
 ```
 
-## 🚀 Quick Start
+## Quick Start
 
 ### Prerequisites
 
 - Docker & Docker Compose
 - Python 3.11+ (for local development)
-- MetaTrader 5 (Windows only for live trading)
+- PostgreSQL 15+ (localhost:5432 or via Docker)
+- Redis 7+ (for rate limiting)
+- MetaTrader 5 (Windows only, for live trading / poller)
 
-### Setup
+### Docker (recommended)
 
-1. **Clone and configure:**
-   ```bash
-   git clone <repository>
-   cd trading_system
-   cp .env.example .env
-   # Edit .env with your MT5 credentials and settings
-   ```
+```bash
+# Start everything (migrations run automatically via entrypoint)
+docker-compose up -d
 
-2. **Start the services:**
-   ```bash
-   docker-compose up -d
-   ```
+# Check logs
+docker-compose logs -f trading_app
+```
 
-3. **Check status:**
-   ```bash
-   docker-compose logs -f trading_app
-   ```
+The entrypoint script waits for Postgres, runs `alembic upgrade head`, then starts uvicorn. If migrations fail, the app still starts in CSV-only mode.
 
-### Access Points
+### Local Development
 
-- **SigNoz Dashboard**: http://localhost:3301 (separate Docker stack)
-- **API**: http://localhost:8000
+```bash
+# 1. Clone and configure
+git clone <repository>
+cd Aegis_trader
+cp .env.example .env  # Edit with your credentials
 
-## ⚙️ Configuration
+# 2. Install dependencies
+python -m venv .venv
+source .venv/bin/activate  # or .venv\Scripts\activate on Windows
+pip install -r requirements.txt
 
-All configuration is via environment variables. See `.env.example` for the complete list.
+# 3. Run database migrations
+alembic upgrade head
 
-### Key Settings
+# 4. Start the server
+cd src && uvicorn main:app --reload
+```
+
+### Running Modes
+
+| Mode | `EA_MODE` | Description |
+|------|-----------|-------------|
+| **EA mode** | `true` (default) | Passive logging server -- receives trade events from the MT5 EA |
+| **Trading mode** | `false` | Full strategy engine -- Python executes the MTFTR strategy via MT5 bridge |
+
+## API Endpoints
+
+### Public
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /health` | Health check |
+| `GET /` | Trade journal dashboard |
+| `POST /api/auth/register` | Create new account |
+| `POST /api/auth/login` | Login (returns JWT + enriched profile) |
+
+### Authenticated (JWT)
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /api/auth/me` | Current user + subscription + rate limits |
+| `POST /api/auth/api-keys` | Generate EA API key |
+| `GET /api/auth/api-keys` | List API keys |
+| `DELETE /api/auth/api-keys/{id}` | Revoke an API key |
+| `GET /trades` | Recent trade events |
+| `GET /trades/summary` | Trade summary stats |
+| `GET /api/journal/*` | Journal analytics |
+| `GET /api/settings` | Full user settings |
+| `PATCH /api/settings` | Update settings (partial) |
+| `GET /api/settings/subscription` | Subscription details |
+| `GET /api/settings/rate-limits` | Current tier's rate limits |
+
+### EA Webhook (API Key)
+
+| Endpoint | Description |
+|----------|-------------|
+| `POST /trade` | EA webhook -- receives trade events (`X-API-Key` header) |
+
+## Authentication
+
+### Multi-Tenant Architecture
+
+Every user is a tenant (`tenant_id == user.id`). All data is isolated per tenant -- trades, deals, snapshots, performance metrics, and tags are scoped by `tenant_id` on every query.
+
+### Auth Flows
+
+- **Dashboard (browser)**: JWT via `Authorization: Bearer <token>` -- obtained from `POST /api/auth/login`
+- **EA webhook (MT5)**: API key via `X-API-Key: <key>` header -- generated from the dashboard or `POST /api/auth/api-keys`
+- **Health check**: No authentication required
+
+### EA Integration
+
+Add the API key header to your MT5 EA's `WebRequest` call:
+```mql5
+input string InpFastAPIKey = "";  // Aegis API Key
+// In SendTradeEvent(): add "X-API-Key: " + InpFastAPIKey + "\r\n" to headers
+```
+
+## Configuration
+
+### Two-Layer Config System
+
+**Layer 1 -- Infrastructure (env-based, `core/config.py`):**
+
+These are server-level settings that don't vary per user.
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `MT5_LOGIN` | MT5 account number | Required |
-| `MT5_PASSWORD` | MT5 password | Required |
-| `MT5_SERVER` | Broker server | Exness-MT5Trial |
-| `MAX_RISK_PER_TRADE` | Risk per trade (decimal) | 0.01 (1%) |
-| `MAX_DAILY_RISK` | Max daily risk | 0.03 (3%) |
-| `MAX_TRADES_PER_DAY` | Trade limit | 3 |
-| `ENABLE_MANUAL_OVERRIDE` | Allow manual intervention | false |
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | SigNoz OTLP endpoint | http://localhost:4318 |
-| `OTEL_LOGS_ENABLED` | Export logs to SigNoz | true |
-| `OTEL_TRACES_ENABLED` | Export traces to SigNoz | true |
+| `EA_MODE` | EA mode or trading mode | `true` |
+| `JWT_SECRET_KEY` | Secret for signing JWTs | `change-me-in-production...` |
+| `DEFAULT_TENANT_ID` | User UUID for TradingSystem (single-tenant) | None |
+| `POSTGRES_HOST/PORT/DB` | PostgreSQL connection | `localhost:5432/trading_db` |
+| `REDIS_HOST/PORT` | Redis connection | `localhost:6379` |
+| `BROKER_MODE` | Connection mode (auto/direct/bridge/paper) | `auto` |
+| `TELEGRAM_BOT_TOKEN` | Bot token (secret, stays in env) | `""` |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | SigNoz OTLP endpoint | `http://localhost:4318` |
 
-## 🛡️ Behavioral Safeguards
+**Layer 2 -- Per-User Trading Config (DB-backed, `settings/loader.py`):**
 
-The system includes multiple safeguards to prevent destructive manual intervention:
+Trading settings (risk rules, strategy params, notifications, sessions) are stored in the `user_settings` DB table. The `.env` values serve as seed defaults for new users.
+
+```
+Registration → creates user_settings row with column defaults
+Dashboard PATCH /api/settings → updates per-user settings
+TradingSystem.initialize() → get_trading_config(user_id) loads from DB
+```
+
+| DB Column | Maps To | Description |
+|-----------|---------|-------------|
+| `max_daily_drawdown_pct` | `max_drawdown_percent` | DB stores 5.00, config uses 0.05 |
+| `max_lot_size` | `max_lot_size` | Position size cap |
+| `max_open_positions` | `max_open_positions` | Concurrent position limit |
+| `max_daily_trades` | `max_daily_trades` | Daily trade cap |
+| `allowed_symbols` | `default_symbol` | First symbol used as default |
+| `strategy_params` (JSONB) | All `mtftr_*` attrs | Strategy-specific parameters |
+| `telegram_enabled` | `telegram_enabled` | Per-user notification toggle |
+
+### Subscriptions & Rate Limiting
+
+Registration creates a `journal` tier subscription (trialing). Rate limits are enforced by Redis-backed sliding window middleware:
+
+| Tier | API/min | API/day | Webhook/min | Strategies | Accounts |
+|------|---------|---------|-------------|------------|----------|
+| Journal | 30 | 5,000 | 60 | 1 | 1 |
+| Pro | 120 | 20,000 | 300 | 10 | 3 |
+| Autopilot | 300 | 50,000 | 600 | 25 | 5 |
+
+If Redis is unavailable, rate limiting is silently disabled (graceful degradation).
+
+## Database
+
+### Migrations (Alembic)
+
+Schema is managed by Alembic. In Docker, migrations run automatically via `scripts/entrypoint.sh`.
+
+| Migration | Description |
+|-----------|-------------|
+| `001_baseline` | Stamp for pre-existing databases |
+| `002_users_api_keys` | `users` and `api_keys` tables |
+| `003_add_tenant_id` | `tenant_id` (nullable) on 10 tenant-scoped tables |
+| `004_seed_user` | Create admin user, assign orphaned data |
+| `005_tenant_not_null` | Enforce `tenant_id NOT NULL` |
+| `006_subscriptions_settings_ratelimits` | `subscriptions`, `user_settings`, `rate_limits` + seed data |
+
+```bash
+alembic upgrade head     # Apply all
+alembic history          # View chain
+```
+
+### Schema (16 tables)
+
+| Table | Tenant-scoped | Description |
+|-------|:---:|-------------|
+| `users` | -- | User accounts |
+| `api_keys` | -- | API keys (FK -> users) |
+| `subscriptions` | -- | Per-user tier + billing state |
+| `user_settings` | -- | Per-user trading configuration |
+| `rate_limits` | -- | Reference: one row per tier |
+| `trades` | Yes | Complete trade lifecycle records |
+| `partial_closes` | Yes | Partial close events |
+| `trade_modifications` | Yes | SL/TP modification history |
+| `journal_deals` | Yes | Raw MT5 deal audit log |
+| `setup_tags` | Yes | User-defined trade categorization |
+| `account_snapshots` | Yes | Periodic account state captures |
+| `daily_performance` | Yes | Aggregated daily metrics |
+| `signals` | Yes | Generated signals (executed or not) |
+| `system_events` | Yes | Audit trail |
+| `trading_pauses` | Yes | When and why trading was paused |
+| `price_bars` | No | Shared market data |
+
+## Behavioral Safeguards
 
 1. **Manual Override Disabled**: By default, no manual trades or modifications
 2. **Consecutive Loss Pause**: Trading pauses after N consecutive losses
@@ -105,31 +267,6 @@ The system uses PostgreSQL with TimescaleDB for efficient time-series data:
 - `daily_performance`: Aggregated daily metrics
 - `system_events`: Audit trail
 - `trading_pauses`: When and why trading was paused
-
-## 🌿 Branching Strategy
-
-This repository follows a **three-tier Git branching model** to keep `main` stable and production-ready at all times.
-
-```
-feature/<name>  ──►  dev  ──►  main
-```
-
-| Branch | Role | Direct push |
-|--------|------|-------------|
-| `main` | Production releases | ❌ Blocked – PRs from `dev` only |
-| `dev` | Integration / staging | `king1edy` only |
-| `feature/*`, `fix/*`, `chore/*` | Active development | Any contributor |
-
-### Contributor workflow
-
-1. **Branch from `dev`** – `git checkout -b feature/<name> dev`
-2. **Push your feature branch** – `git push origin feature/<name>`
-3. **Open a PR targeting `dev`** – never target `main` directly
-4. **Release** – `king1edy` opens a `dev → main` PR when a release is ready
-
-See [CONTRIBUTING.md](CONTRIBUTING.md) for the full guide.
-
----
 
 ## 🔧 Development
 
@@ -170,83 +307,27 @@ mypy src/
 
 ### SigNoz Observability
 
-The system uses SigNoz for observability, which runs in a separate Docker Compose stack. Logs and traces are exported via OpenTelemetry.
+Logs and traces are exported via OpenTelemetry to SigNoz (runs in a separate compose stack).
 
-**Setup SigNoz:**
-```bash
-# Clone SigNoz
-git clone https://github.com/SigNoz/signoz.git
-cd signoz/deploy
-docker-compose -f docker/clickhouse-setup/docker-compose.yaml up -d
-```
-
-**Configure (in .env):**
 ```env
 OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318
 OTEL_SERVICE_NAME=aegis-trading
 OTEL_LOGS_ENABLED=true
 OTEL_TRACES_ENABLED=true
-OTEL_METRICS_ENABLED=true
 ```
 
-SigNoz provides:
-- Distributed tracing for trade execution flows
-- Centralized log aggregation with search
-- Metrics dashboards
-- Alerting capabilities
+### Telegram Alerts
 
-### Alerts
+Per-user notification preferences (trade opens/closes, daily summaries, drawdown warnings) are configured via `PATCH /api/settings`. The bot token stays in `.env` as a secret.
 
-Configure Telegram notifications for:
-- Trade opens/closes
-- Daily summaries
-- Drawdown warnings
-- System errors
+## Important Notes
 
-## 🚧 Development Phases
-
-### Phase 1: Foundation ✅
-- Docker environment
-- Database models
-- MT5 connection
-- Logging infrastructure
-
-### Phase 2: Strategy Engine (Next)
-- Indicator calculations
-- Hull Suite strategy
-- Session filtering
-- Signal generation
-
-### Phase 3: Risk Management
-- Position sizing (ATR-based)
-- Daily limits
-- Drawdown protection
-- Behavioral safeguards
-
-### Phase 4: Execution & Monitoring
-- Order execution engine
-- Trade lifecycle management
-- Telegram notifications
-- SigNoz observability
-
-### Phase 5: Backtesting
-- Historical data pipeline
-- Backtest engine
-- Walk-forward optimization
-- Performance reporting
-
-## ⚠️ Important Notes
-
-1. **Trust the System**: Your historical data shows EAs outperform manual trading
-2. **Demo First**: Always test thoroughly on demo before live deployment
-3. **Risk Management**: Never exceed configured risk limits
-4. **Logs**: Review logs regularly to understand system behavior
+1. **Demo First**: Always test thoroughly on demo before live deployment
+2. **Set JWT_SECRET_KEY**: Use `openssl rand -hex 32` in production
+3. **Risk Management**: User settings define risk limits; env values are seed defaults only
+4. **Docker Migrations**: The entrypoint auto-runs `alembic upgrade head` on container start
 5. **Backtest**: Validate any strategy changes with comprehensive backtesting
 
-## 📝 License
+## License
 
 Private - For personal use only.
-
----
-
-*Remember: The best trade is often no trade. Let the system wait for high-probability setups.*

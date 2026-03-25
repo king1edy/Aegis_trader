@@ -20,9 +20,9 @@ from decimal import Decimal
 from enum import Enum
 from typing import Dict, List, Optional, Any
 
-from src.core.config import settings
-from src.core.logging_config import get_logger, TradingContextLogger
-from src.core.exceptions import (
+from core.config import settings
+from core.logging_config import get_logger, TradingContextLogger
+from core.exceptions import (
     MT5ConnectionError,
     OrderExecutionError,
     PositionNotFoundError,
@@ -32,7 +32,7 @@ from src.core.exceptions import (
 
 # Import HistoricalDataLoader for demo connector
 try:
-    from src.data.historical_loader import HistoricalDataLoader
+    from data.historical_loader import HistoricalDataLoader
     HISTORICAL_DATA_AVAILABLE = True
 except ImportError:
     HistoricalDataLoader = None

@@ -1,8 +1,8 @@
-# 🏛️ Aegis Trader System Architecture
+# Aegis Trader System Architecture
 
 > **Comprehensive Technical Documentation**
 >
-> Last Updated: February 2026 (v1.1)
+> Last Updated: March 2026 (v4.0)
 
 ---
 
@@ -11,33 +11,44 @@
 1. [Overview](#overview)
 2. [High-Level Architecture](#high-level-architecture)
 3. [Component Breakdown](#component-breakdown)
-   - [Entry Point](#1️⃣-entry-point---srcmainpy)
-   - [Configuration](#2️⃣-configuration---srccoreconfgipy)
-   - [Broker Execution Layer](#3️⃣-broker-execution-layer---srcexecution)
-   - [Strategy Layer](#4️⃣-strategy-layer---srcstrategies)
-   - [Risk Management](#5️⃣-risk-management---srcrisk)
-   - [Notification System](#6️⃣-notification-system---srcnotifications)
-   - [Database Layer](#7️⃣-database-layer---srcdatabase)
-   - [Infrastructure](#8️⃣-infrastructure---docker-setup)
-   - [Backtesting Engine](#9️⃣-backtesting-engine)
-4. [Complete Data Flow](#complete-data-flow)
-5. [Behavioral Safeguards](#behavioral-safeguards)
-6. [Monitoring & Observability](#monitoring--observability)
-7. [Key Touch Points Summary](#key-touch-points-summary)
+   - [Entry Point](#1-entry-point---srcmainpy)
+   - [Configuration & Settings](#2-configuration--settings)
+   - [Authentication & Multi-Tenancy](#3-authentication--multi-tenancy)
+   - [Broker Execution Layer](#4-broker-execution-layer---srcexecution)
+   - [Strategy Layer](#5-strategy-layer---srcstrategies)
+   - [Risk Management](#6-risk-management---srcrisk)
+   - [Notification System](#7-notification-system---srcnotifications)
+   - [Database Layer](#8-database-layer---srcdatabase)
+   - [Infrastructure](#9-infrastructure---docker-setup)
+   - [Backtesting Engine](#10-backtesting-engine)
+4. [Configuration Flow](#configuration-flow)
+5. [Complete Data Flow](#complete-data-flow)
+6. [Behavioral Safeguards](#behavioral-safeguards)
+7. [Monitoring & Observability](#monitoring--observability)
+8. [Key Touch Points Summary](#key-touch-points-summary)
 
 ---
 
 ## Overview
 
-**Aegis Trader** is a professional-grade automated trading system for **XAUUSD (Gold)** using **MetaTrader 5**. The core philosophy is **removing human emotion from trading** - manual interventions are disabled by default.
+**Aegis Trader** is a multi-tenant SaaS trading platform for **XAUUSD (Gold)** using **MetaTrader 5**. It combines automated strategy execution with a trade journal, analytics dashboard, and per-user risk management.
 
 ### Key Principles
 
-- **Full Automation**: The system should be trusted completely
-- **Disciplined Execution**: Consistent strategy execution without emotional interference
+- **Multi-Tenant SaaS**: Per-user settings, subscriptions, and rate limits
+- **DB-Driven Configuration**: Trading settings live in the database, not environment variables
+- **Full Automation**: Manual interventions disabled by default in trading mode
 - **Risk-First Design**: Multiple safeguards prevent destructive behavior
-- **Multi-Timeframe Analysis**: 4H trend → 1H confirmation → 15M entry
+- **Multi-Timeframe Analysis**: 4H trend, 1H confirmation, 15M entry
 - **Real-Time Notifications**: Telegram alerts for all trading events
+
+### Subscription Tiers
+
+| Tier | Name | Description |
+|------|------|-------------|
+| **Journal** | Aegis Journal | EA mode - journal and analytics |
+| **Pro** | Aegis Pro | Journal + risk management enforcement |
+| **Autopilot** | Aegis Autopilot | Full Python Bridge strategy execution |
 
 ---
 
@@ -48,47 +59,54 @@
 │                           AEGIS TRADER SYSTEM                               │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │                                                                             │
-│  ┌─────────────┐    ┌──────────────┐    ┌─────────────┐    ┌────────────┐  │
-│  │   BROKER    │◄──►│   STRATEGY   │◄──►│    RISK     │◄──►│  DATABASE  │  │
-│  │  EXECUTION  │    │    ENGINE    │    │ MANAGEMENT  │    │   LAYER    │  │
-│  └─────────────┘    └──────────────┘    └─────────────┘    └────────────┘  │
-│         │                  │                   │                 │          │
-│         │                  │                   │                 │          │
-│         ▼                  ▼                   ▼                 ▼          │
-│  ┌─────────────────────────────────────────────────────────────────────┐   │
-│  │                       MAIN TRADING LOOP                             │   │
-│  │  1. Check risk monitor (every tick)                                 │   │
-│  │  2. Manage existing positions (every tick)                          │   │
-│  │  3. Check for new 15M bar → Generate signals                        │   │
-│  │  4. Validate signals against risk limits                            │   │
-│  │  5. Execute approved signals                                        │   │
-│  └─────────────────────────────────────────────────────────────────────┘   │
-│         │                                                                   │
-│         ▼                                                                   │
-│  ┌─────────────────────────────────────────────────────────────────────┐   │
-│  │                    NOTIFICATION LAYER                               │   │
-│  │  📱 Telegram alerts for trades, signals, risks, and system events   │   │
-│  └─────────────────────────────────────────────────────────────────────┘   │
-│         │                                                                   │
-│         ▼                                                                   │
-│  ┌─────────────────────────────────────────────────────────────────────┐   │
-│  │                   BACKGROUND RISK MONITOR                            │   │
-│  │  🛡️ Always-on drawdown protection (runs every 18 seconds)           │   │
-│  └─────────────────────────────────────────────────────────────────────┘   │
-│                                                                             │
-└─────────────────────────────────────────────────────────────────────────────┘
+│  ┌────────────┐   ┌──────────────┐   ┌─────────────┐   ┌───────────────┐  │
+│  │   AUTH &   │──►│   SETTINGS   │──►│  RATE LIMIT │──►│   FASTAPI     │  │
+│  │  JWT/API   │   │   LOADER     │   │  MIDDLEWARE  │   │   ROUTES      │  │
+│  │   KEYS     │   │  (DB→Config) │   │   (Redis)   │   │               │  │
+│  └────────────┘   └──────────────┘   └─────────────┘   └───────────────┘  │
+│                          │                                      │          │
+│                          ▼                                      ▼          │
+│  ┌─────────────┐  ┌──────────────┐  ┌─────────────┐   ┌────────────────┐ │
+│  │   BROKER    │◄─│   STRATEGY   │◄─│    RISK     │◄──│  DATABASE      │ │
+│  │  EXECUTION  │  │    ENGINE    │  │ MANAGEMENT  │   │  (PostgreSQL)  │ │
+│  └─────────────┘  └──────────────┘  └─────────────┘   └────────────────┘ │
+│         │                │                 │                    │          │
+│         ▼                ▼                 ▼                    ▼          │
+│  ┌─────────────────────────────────────────────────────────────────────┐  │
+│  │                  MAIN TRADING LOOP (EA_MODE=false)                  │  │
+│  │  1. Load TradingConfig from DB for user                            │  │
+│  │  2. Check risk monitor (every tick)                                │  │
+│  │  3. Manage existing positions (every tick)                         │  │
+│  │  4. Check for new bar → Generate signals                           │  │
+│  │  5. Validate signals against user's risk limits                    │  │
+│  │  6. Execute approved signals                                       │  │
+│  └─────────────────────────────────────────────────────────────────────┘  │
+│         │                                                                  │
+│         ▼                                                                  │
+│  ┌─────────────────────────────────────────────────────────────────────┐  │
+│  │               NOTIFICATION + RISK MONITOR LAYERS                   │  │
+│  │  Telegram alerts | Background drawdown protection (18s cycle)      │  │
+│  └─────────────────────────────────────────────────────────────────────┘  │
+│                                                                            │
+└────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
 ## Component Breakdown
 
-### 1️⃣ Entry Point - `src/main.py`
+### 1. Entry Point - `src/main.py`
 
-The `TradingSystem` class orchestrates all components:
+The FastAPI app serves two modes:
+
+- **EA mode** (`EA_MODE=true`): Passive logging server + dashboard + journal
+- **Trading mode** (`EA_MODE=false`): Full strategy execution via `TradingSystem`
+
+The `TradingSystem` class orchestrates all trading components:
 
 | Component | Role |
 |-----------|------|
+| `trading_config` | Per-user `TradingConfig` loaded from DB |
 | `broker` | Connection to MetaTrader 5 |
 | `data_manager` | Multi-timeframe price data caching |
 | `indicator_calc` | Technical indicator calculations |
@@ -97,133 +115,156 @@ The `TradingSystem` class orchestrates all components:
 | `position_manager` | Manages open positions (TPs, trailing stops) |
 | `position_sizer` | Calculates lot sizes based on risk % |
 | `risk_checker` | Validates all risk limits |
-| `risk_monitor` | **NEW** Background drawdown monitoring |
-| `notifier` | **NEW** Telegram notification service |
+| `risk_monitor` | Background drawdown monitoring |
+| `notifier` | Telegram notification service |
+
+#### Initialization Flow
+
+```
+TradingSystem(user_id)
+  └─ initialize()
+       ├─ init_database()
+       ├─ get_trading_config(user_id)  ← loads from DB or env fallback
+       ├─ create_broker(settings)       ← infrastructure from env
+       ├─ NotificationService(trading_config)
+       ├─ SessionFilter(trading_config.london_start, ...)
+       ├─ PositionSizer(trading_config)
+       ├─ RiskChecker(trading_config, ...)
+       ├─ MTFTRStrategy(config from trading_config)
+       └─ RiskMonitor(config from trading_config)
+```
 
 #### Main Loop Flow
 
 ```
-initialize() → run() → _trading_iteration() [loops forever]
-                              │
-                              ├─ Check risk_monitor.is_trading_blocked
-                              │
-                              ├─ PHASE 1: manage_positions() (every tick)
-                              │
-                              └─ PHASE 2: On new 15M bar:
-                                    ├─ strategy.analyze() → TradingSignal
-                                    ├─ notifier.notify_signal_generated()
-                                    ├─ risk_checker.check_all_limits()
-                                    ├─ position_sizer.calculate_lot_size()
-                                    ├─ _execute_signal()
-                                    └─ notifier.notify_trade_opened()
+run() → _trading_iteration() [loops forever]
+              │
+              ├─ Check risk_monitor.is_trading_blocked
+              │
+              ├─ PHASE 1: manage_positions() (every tick)
+              │
+              └─ PHASE 2: On new bar:
+                    ├─ strategy.analyze() → TradingSignal
+                    ├─ notifier.notify_signal_generated()
+                    ├─ risk_checker.check_all_limits()
+                    ├─ position_sizer.calculate_lot_size()
+                    ├─ _execute_signal()
+                    └─ notifier.notify_trade_opened()
 ```
 
-#### Key Methods
-
-- `initialize()` - Sets up all components, connects to broker, starts risk monitor
-- `run()` - Main trading loop with error handling
-- `_trading_iteration()` - Single iteration of the loop
-- `_execute_signal()` - Places trade and records to database
-- `_on_risk_breach()` - **NEW** Handles risk threshold breaches
-- `_emergency_close_all()` - **NEW** Emergency position liquidation
-- `shutdown()` - Graceful cleanup with notification
-
 ---
 
-### 2️⃣ Configuration - `src/core/config.py`
+### 2. Configuration & Settings
 
-Centralized settings via **Pydantic Settings** (loaded from `.env`):
+The configuration system has two layers:
 
-#### Application Settings
+#### Layer 1: Infrastructure (`core/config.py` — env-based)
 
-| Setting | Description | Default |
-|---------|-------------|---------|
-| `app_env` | Environment (development/staging/production) | development |
-| `debug` | Enable debug mode | False |
-| `log_level` | Logging level | INFO |
-
-#### MT5 Connection
+Pydantic Settings loaded from `.env`. These are **server-level** settings that don't vary per user:
 
 | Setting | Description | Default |
 |---------|-------------|---------|
-| `mt5_login` | MT5 account number | Required |
-| `mt5_password` | MT5 password | Required |
-| `mt5_server` | Broker server name | Exness-MT5Trial |
+| `app_env` | Environment (dev/staging/prod) | development |
+| `ea_mode` | EA mode or trading mode | false |
 | `broker_mode` | Connection mode (auto/direct/bridge/paper) | auto |
+| `postgres_host/port/db` | Database connection | localhost:5432 |
+| `redis_host/port/db` | Redis connection | localhost:6379 |
+| `jwt_secret_key` | JWT signing secret | change-me... |
 | `mt5_bridge_url` | API bridge URL for Docker | http://host.docker.internal:8001 |
+| `default_tenant_id` | User UUID for TradingSystem in single-tenant mode | None |
 
-#### Risk Management
+Trading parameters (risk, strategy, notifications) also exist in `core/config.py` as **seed defaults** for new users. At runtime they are overridden by DB values.
 
-| Setting | Description | Default |
-|---------|-------------|---------|
-| `max_risk_per_trade` | Risk per trade (decimal) | 0.01 (1%) |
-| `max_daily_risk` | Maximum daily risk | 0.03 (3%) |
-| `max_drawdown_percent` | Maximum drawdown before shutdown | 0.10 (10%) |
-| `max_trades_per_day` | Daily trade limit | 3 |
-| `min_trade_interval_minutes` | Cooldown between trades | 60 |
-| `max_daily_loss_percent` | Max daily loss percentage | 0.03 (3%) |
-| `min_margin_level` | Minimum margin level % | 200.0 |
+#### Layer 2: Per-User Trading Config (`settings/loader.py` — DB-backed)
 
-#### Position Limits
+`TradingConfig` is a dataclass loaded from the `user_settings` table. It provides all trading-specific settings to `TradingSystem`, `RiskChecker`, `PositionSizer`, and `TelegramNotifier`.
 
-| Setting | Description | Default |
-|---------|-------------|---------|
-| `max_open_positions` | Max concurrent positions | 2 |
-| `max_daily_trades` | Max trades per day | 3 |
-| `default_lot_size` | Default lot size | 0.01 |
-| `max_lot_size` | Maximum lot size | 0.05 |
+```
+get_trading_config(user_id)
+  │
+  ├─ user_id provided? → SELECT from user_settings WHERE user_id = ?
+  │   ├─ Row found → TradingConfig.from_db(row, env_fallbacks)
+  │   └─ No row   → TradingConfig.from_env()
+  │
+  └─ No user_id? → Try settings.default_tenant_id
+      ├─ Set   → load from DB for that user
+      └─ Unset → TradingConfig.from_env()
+```
 
-#### Session Filtering (GMT)
+**DB columns → TradingConfig mapping:**
 
-| Setting | Description | Default |
-|---------|-------------|---------|
-| `london_session_start` | London open | 07:00 |
-| `london_session_end` | London close | 12:00 |
-| `ny_session_start` | New York open | 13:00 |
-| `ny_session_end` | New York close | 16:00 |
+| DB Column (`user_settings`) | TradingConfig Attribute |
+|-----------------------------|-------------------------|
+| `max_daily_drawdown_pct` (5.00) | `max_drawdown_percent` (0.05) |
+| `max_lot_size` | `max_lot_size` |
+| `max_open_positions` | `max_open_positions` |
+| `max_daily_trades` | `max_daily_trades` |
+| `max_consecutive_losses` | `max_consecutive_losses` |
+| `allowed_sessions` | `allowed_sessions` |
+| `allowed_symbols[0]` | `default_symbol` |
+| `telegram_enabled` | `telegram_enabled` |
+| `notify_on_trade_open` | `notify_on_trade_open` |
+| `strategy_params` (JSONB) | All `mtftr_*` params |
 
-#### MTFTR Strategy Parameters
-
-| Setting | Description | Default |
-|---------|-------------|---------|
-| `mtftr_enabled` | Enable MTFTR strategy | True |
-| `mtftr_ema_200` | 4H trend EMA period | 200 |
-| `mtftr_ema_50` | 1H confirmation EMA | 50 |
-| `mtftr_ema_21` | 15M entry EMA | 21 |
-| `mtftr_hull_55` | 4H Hull MA period | 55 |
-| `mtftr_hull_34` | 1H Hull MA period | 34 |
-| `mtftr_tp1_rr` | TP1 risk:reward | 1.0 |
-| `mtftr_tp2_rr` | TP2 risk:reward | 2.0 |
-| `mtftr_tp1_close_percent` | Close at TP1 | 0.50 (50%) |
-| `mtftr_tp2_close_percent` | Close at TP2 | 0.30 (30%) |
-| `mtftr_trail_percent` | Trail remainder | 0.20 (20%) |
-
-#### Telegram Notifications *(NEW)*
-
-| Setting | Description | Default |
-|---------|-------------|---------|
-| `telegram_enabled` | Enable Telegram notifications | False |
-| `telegram_bot_token` | Telegram bot API token | "" |
-| `telegram_chat_id` | Telegram chat/channel ID | "" |
-| `notify_on_trade_open` | Notify when trades open | True |
-| `notify_on_trade_close` | Notify when trades close | True |
-| `notify_on_signal_generated` | Notify on new signals | True |
-| `notify_on_daily_summary` | Send daily summary | True |
-| `notify_on_error` | Notify on errors | True |
-| `notify_on_drawdown_warning` | Notify on drawdown warnings | True |
-
-#### Behavioral Safeguards
-
-| Setting | Description | Default |
-|---------|-------------|---------|
-| `enable_manual_override` | Allow manual intervention | **False** |
-| `max_consecutive_losses` | Losses before pause | 3 |
-| `pause_duration_hours` | Pause length | 4 |
-| `cooldown_after_loss_minutes` | Post-loss cooldown | 30 |
+Strategy-specific parameters (indicator periods, RSI filters, R:R ratios) are stored in the `strategy_params` JSONB column and extracted by `TradingConfig.from_db()`.
 
 ---
 
-### 3️⃣ Broker Execution Layer - `src/execution/`
+### 3. Authentication & Multi-Tenancy
+
+#### Auth Module (`src/auth/`)
+
+| File | Purpose |
+|------|---------|
+| `models.py` | `User` + `ApiKey` SQLAlchemy models |
+| `subscription_models.py` | `Subscription`, `UserSettings`, `RateLimits` |
+| `security.py` | Password hashing (bcrypt), JWT, API key hashing |
+| `dependencies.py` | FastAPI deps: `get_current_user`, `verify_api_key`, `get_tenant_id` |
+| `router.py` | Register, login, `/me`, API key CRUD |
+
+#### Auth Flows
+
+- **Dashboard (browser)**: JWT via `Authorization: Bearer <token>`
+- **EA webhook (MT5)**: API key via `X-API-Key: <key>` header
+- **Health check**: No authentication required
+
+#### Multi-Tenancy
+
+Every user is a tenant (`tenant_id == user.id`). All data is scoped by `tenant_id`:
+
+- Trades, deals, snapshots, performance, signals, tags
+- The `TenantMixin` provides `_scope(query)` and `_stamp(obj)` on repositories
+
+#### Subscriptions & Rate Limiting
+
+**Subscription tiers** control rate limits and feature access:
+
+| Tier | API/min | API/day | Webhook/min | Strategies | Accounts |
+|------|---------|---------|-------------|------------|----------|
+| Journal | 30 | 5,000 | 60 | 1 | 1 |
+| Pro | 120 | 20,000 | 300 | 10 | 3 |
+| Autopilot | 300 | 50,000 | 600 | 25 | 5 |
+
+**Rate limiting** (`core/rate_limiter.py`): Redis-backed sliding window middleware.
+- Authenticated: tier-based per-minute + per-day limits
+- Unauthenticated public paths: IP-based 30/min
+- `POST /trade`: additional webhook rate limit
+- Graceful degradation: if Redis unavailable, passes through
+
+#### Settings CRUD (`src/settings/`)
+
+| Endpoint | Auth | Description |
+|----------|------|-------------|
+| `GET /api/settings` | JWT | Full user settings |
+| `PATCH /api/settings` | JWT | Partial update (only non-None fields) |
+| `GET /api/settings/subscription` | JWT | Subscription details |
+| `GET /api/settings/rate-limits` | JWT | Current tier's rate limits |
+
+The dashboard includes a settings modal that calls these endpoints.
+
+---
+
+### 4. Broker Execution Layer - `src/execution/`
 
 #### Broker Factory (`broker_factory.py`)
 
@@ -296,7 +337,7 @@ class BrokerInterface(ABC):
 
 ---
 
-### 4️⃣ Strategy Layer - `src/strategies/`
+### 5. Strategy Layer - `src/strategies/`
 
 #### MTFTR Strategy (`mtftr.py`)
 
@@ -462,7 +503,7 @@ class TradingSignal:
 
 ---
 
-### 5️⃣ Risk Management - `src/risk/`
+### 6. Risk Management - `src/risk/`
 
 #### Risk Checker (`risk_checker.py`)
 
@@ -566,7 +607,7 @@ class RiskState:
 
 ---
 
-### 6️⃣ Notification System - `src/notifications/` *(NEW)*
+### 7. Notification System - `src/notifications/` *(NEW)*
 
 Centralized notification system for real-time trading alerts via Telegram.
 
@@ -673,7 +714,7 @@ Rich emoji-styled Markdown messages:
 
 ---
 
-### 7️⃣ Database Layer - `src/database/`
+### 8. Database Layer - `src/database/`
 
 #### Database Stack
 
@@ -681,18 +722,26 @@ Rich emoji-styled Markdown messages:
 - **Async SQLAlchemy** for non-blocking queries
 - **UUID primary keys** for distributed safety
 
-#### Models (`models.py`)
+#### Models
 
-| Model | Purpose |
-|-------|---------|
-| `Trade` | Complete trade lifecycle (signal → close) |
-| `PartialClose` | Records partial exits (TP1, TP2) |
-| `TradeModification` | Audit trail for SL/TP changes |
-| `Signal` | All generated signals (executed or not) |
-| `DailyPerformance` | Daily P&L aggregates |
-| `AccountSnapshot` | Periodic account state |
-| `TradingPause` | Trading pause events |
-| `SystemEvent` | General system events |
+| Model | File | Tenant-Scoped | Purpose |
+|-------|------|:---:|---------|
+| `User` | `auth/models.py` | -- | User accounts |
+| `ApiKey` | `auth/models.py` | -- | API keys (FK -> users) |
+| `Subscription` | `auth/subscription_models.py` | -- | Per-user tier + billing state |
+| `UserSettings` | `auth/subscription_models.py` | -- | Per-user trading config |
+| `RateLimits` | `auth/subscription_models.py` | -- | Reference: one row per tier |
+| `Trade` | `database/models.py` | Yes | Complete trade lifecycle |
+| `PartialClose` | `database/models.py` | Yes | Partial close events |
+| `TradeModification` | `database/models.py` | Yes | SL/TP modification history |
+| `JournalDeal` | `database/models.py` | Yes | Raw MT5 deal audit log |
+| `Signal` | `database/models.py` | Yes | Generated signals |
+| `DailyPerformance` | `database/models.py` | Yes | Aggregated daily metrics |
+| `AccountSnapshot` | `database/models.py` | Yes | Periodic account state |
+| `TradingPause` | `database/models.py` | Yes | When/why trading paused |
+| `SystemEvent` | `database/models.py` | Yes | Audit trail |
+| `SetupTag` | `database/models.py` | Yes | User-defined trade tags |
+| `PriceBar` | `database/models.py` | No | Shared market data |
 
 ##### Trade Model (Core)
 
@@ -759,30 +808,43 @@ async with get_session() as session:
 
 ---
 
-### 8️⃣ Infrastructure - Docker Setup
+### 9. Infrastructure - Docker Setup
+
+#### Container Startup
+
+The `scripts/entrypoint.sh` handles startup:
+
+1. Wait for PostgreSQL to be ready (up to 30s)
+2. Run `alembic upgrade head` (tolerates failure for CSV-only mode)
+3. Start uvicorn
 
 #### Services (`docker-compose.yml`)
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                    DOCKER SERVICES                          │
+│                    DOCKER SERVICES                           │
 ├─────────────────────────────────────────────────────────────┤
-│  trading_app   │  Main Python trading application           │
-│  postgres      │  TimescaleDB for time-series data          │
-│  redis         │  Caching and real-time state               │
-│  grafana       │  Monitoring dashboards (:3000)             │
-│  prometheus    │  Metrics collection (:9090)                │
+│  trading_app   │  Python app (entrypoint runs migrations)   │
+│  postgres      │  TimescaleDB 2.14.2-pg15                   │
+│  redis         │  Redis 7 (rate limiting + state)            │
 └─────────────────────────────────────────────────────────────┘
 ```
 
-#### Network Configuration
+Monitoring (SigNoz) runs in a separate compose stack.
 
-| Setting | Value | Purpose |
-|---------|-------|---------|
-| `BROKER_MODE` | bridge | Connect via HTTP to Windows host |
-| `MT5_BRIDGE_URL` | http://host.docker.internal:8001 | MT5 API bridge |
-| `DATABASE_URL` | postgresql://...@postgres:5432/... | Container networking |
-| `REDIS_URL` | redis://redis:6379/0 | Container networking |
+#### Environment Variable Strategy
+
+The `docker-compose.yml` sets **only infrastructure** env vars:
+
+| Variable | Purpose |
+|----------|---------|
+| `POSTGRES_HOST`, `DATABASE_URL` | Container networking override |
+| `REDIS_HOST`, `REDIS_URL` | Container networking override |
+| `EA_MODE`, `EA_LOG_SERVER_HOST/PORT` | Runtime mode |
+| `BROKER_MODE`, `MT5_BRIDGE_URL` | Broker connectivity |
+| `TRADE_LOG_CSV_PATH` | CSV log location |
+
+**Trading settings** (risk, strategy, notifications, sessions) are loaded at runtime from the `user_settings` DB table via `settings.loader.get_trading_config()`. The `.env` values serve as seed defaults for new user registrations only.
 
 #### Volumes
 
@@ -790,9 +852,8 @@ async with get_session() as session:
 |--------|---------|
 | `postgres_data` | Persistent trade database |
 | `redis_data` | Redis persistence |
-| `grafana_data` | Dashboard configs |
-| `prometheus_data` | Metrics history |
-| `./src` | Live code mounting |
+| `./src` | Live code mounting (dev) |
+| `./alembic` | Migration files (mounted for dev hot-reload) |
 | `./logs` | Application logs |
 | `./data` | Historical data |
 
@@ -808,7 +869,7 @@ This exposes MT5 functionality via HTTP on port 8001.
 
 ---
 
-### 9️⃣ Backtesting Engine - `src/backtesting/engine.py`
+### 10. Backtesting Engine - `src/backtesting/engine.py`
 
 Event-driven backtester for strategy validation:
 
@@ -865,6 +926,51 @@ python -m src.backtesting.run_backtest
 Output files:
 - `backtest_trades_XAUUSD_{dates}.csv` - All trades
 - `backtest_equity_XAUUSD_{dates}.csv` - Equity curve
+
+---
+
+## Configuration Flow
+
+```
+┌──────────────────────────────────────────────────────────────────────────┐
+│                      CONFIGURATION LIFECYCLE                             │
+└──────────────────────────────────────────────────────────────────────────┘
+
+1. SEED DEFAULTS (.env file)
+   ┌──────────────────────────────────────────────────────────────────────┐
+   │  core/config.py loads from .env at startup                          │
+   │  Trading params (risk, strategy, notifications) = seed defaults     │
+   │  Infrastructure params (DB, Redis, JWT) = runtime source of truth   │
+   └──────────────────────────────────────────────────────────────────────┘
+
+2. USER REGISTRATION (POST /api/auth/register)
+   ┌──────────────────────────────────────────────────────────────────────┐
+   │  Creates in one transaction:                                        │
+   │    ├─ User row                                                      │
+   │    ├─ Subscription (tier=journal, status=trialing)                  │
+   │    └─ UserSettings (column defaults from model)                     │
+   └──────────────────────────────────────────────────────────────────────┘
+
+3. USER CONFIGURES (PATCH /api/settings)
+   ┌──────────────────────────────────────────────────────────────────────┐
+   │  Updates specific fields in user_settings row                       │
+   │  Strategy params go into strategy_params JSONB column               │
+   └──────────────────────────────────────────────────────────────────────┘
+
+4. RUNTIME LOADING (TradingSystem.initialize / get_trading_config)
+   ┌──────────────────────────────────────────────────────────────────────┐
+   │  settings.loader.get_trading_config(user_id)                        │
+   │    ├─ Reads user_settings row from DB                               │
+   │    ├─ Extracts typed columns (risk rules, notifications)            │
+   │    ├─ Extracts strategy_params JSONB (mtftr_* params)               │
+   │    ├─ Falls back to env for missing values                          │
+   │    └─ Returns TradingConfig dataclass                               │
+   │                                                                     │
+   │  TradingConfig is duck-type compatible with core.config.Settings    │
+   │  — all consumers (RiskChecker, PositionSizer, TelegramNotifier)     │
+   │  work unchanged.                                                    │
+   └──────────────────────────────────────────────────────────────────────┘
+```
 
 ---
 
@@ -1006,11 +1112,11 @@ BACKGROUND: RISK MONITOR (Every ~18 seconds)
 
 | Service | URL | Purpose |
 |---------|-----|---------|
-| Grafana | http://localhost:3000 | Trading dashboards |
-| Prometheus | http://localhost:9090 | Metrics collection |
+| SigNoz | http://localhost:3301 | Logs, traces, metrics (OpenTelemetry) |
 | PostgreSQL | localhost:5432 | Trade database |
-| Redis | localhost:6379 | State caching |
-| **Telegram** | Via Bot | Real-time alerts |
+| Redis | localhost:6379 | Rate limiting + state |
+| Telegram | Via Bot | Real-time alerts |
+| Dashboard | http://localhost:8000/ | Trade journal + analytics |
 
 ### Logging
 
@@ -1049,25 +1155,28 @@ Log files: `./logs/`
 
 | # | Component | File | Purpose |
 |---|-----------|------|---------|
-| 1 | Entry Point | `src/main.py` | `TradingSystem.run()` |
-| 2 | Config | `src/core/config.py` | Pydantic Settings from `.env` |
-| 3 | Broker Factory | `src/execution/broker_factory.py` | Auto-select MT5/Bridge/Paper |
-| 4 | Data Manager | `src/strategies/data_manager.py` | Cached multi-timeframe data |
-| 5 | Indicators | `src/strategies/indicators.py` | EMA, Hull, RSI, ATR, Swings |
-| 6 | Strategy | `src/strategies/mtftr.py` | Trend analysis + entry triggers |
-| 7 | Session Filter | `src/strategies/filters/session_filter.py` | London/NY only |
-| 8 | Patterns | `src/strategies/patterns.py` | Candlestick patterns |
-| 9 | Risk Checker | `src/risk/risk_checker.py` | All limits validated |
-| 10 | **Risk Monitor** | `src/risk/risk_monitor.py` | **Background drawdown protection** |
-| 11 | Position Sizer | `src/risk/position_sizer.py` | 1% risk calculation |
-| 12 | MT5 Connector | `src/execution/mt5_connector.py` | Place orders |
-| 13 | Position Manager | `src/strategies/position_manager.py` | TPs, trailing, exits |
-| 14 | Database | `src/database/repository.py` | Trade persistence |
-| 15 | Models | `src/database/models.py` | Data structures |
-| 16 | **Notification Service** | `src/notifications/service.py` | **Central notification facade** |
-| 17 | **Telegram Notifier** | `src/notifications/telegram.py` | **Telegram message sending** |
-| 18 | **Message Formatter** | `src/notifications/message_formatter.py` | **Rich emoji formatting** |
-| 19 | Backtesting | `src/backtesting/engine.py` | Historical simulation |
+| 1 | Entry Point | `src/main.py` | FastAPI app, lifespan, router wiring |
+| 2 | Env Config | `src/core/config.py` | Infrastructure settings from `.env` |
+| 3 | Settings Loader | `src/settings/loader.py` | DB-backed `TradingConfig` per user |
+| 4 | Settings CRUD | `src/settings/router.py` | `GET/PATCH /api/settings` |
+| 5 | Auth Router | `src/auth/router.py` | Register, login, `/me`, API keys |
+| 6 | Auth Dependencies | `src/auth/dependencies.py` | JWT + API key FastAPI deps |
+| 7 | Subscription Models | `src/auth/subscription_models.py` | Subscription, UserSettings, RateLimits |
+| 8 | Rate Limiter | `src/core/rate_limiter.py` | Redis sliding window middleware |
+| 9 | Trading System | `src/trading_system.py` | Strategy orchestration (EA_MODE=false) |
+| 10 | Broker Factory | `src/execution/broker_factory.py` | Auto-select MT5/Bridge/Paper |
+| 11 | Strategy | `src/strategies/mtftr.py` | MTFTR trend analysis + entry triggers |
+| 12 | Risk Checker | `src/risk/risk_checker.py` | All limits validated |
+| 13 | Risk Monitor | `src/risk/risk_monitor.py` | Background drawdown protection |
+| 14 | Position Sizer | `src/risk/position_sizer.py` | 1% risk lot calculation |
+| 15 | Position Manager | `src/strategies/position_manager.py` | TPs, trailing, exits |
+| 16 | Notification Service | `src/notifications/service.py` | Central notification facade |
+| 17 | Telegram Notifier | `src/notifications/telegram.py` | Telegram message sending |
+| 18 | Database | `src/database/repository.py` | Tenant-scoped trade persistence |
+| 19 | EA Event Server | `src/trade_logging/trade_event_server.py` | POST /trade webhook |
+| 20 | Journal Dashboard | `src/journal/router.py` | Dashboard HTML + analytics API |
+| 21 | Docker Entrypoint | `scripts/entrypoint.sh` | Migrations + uvicorn startup |
+| 22 | Backtesting | `src/backtesting/engine.py` | Historical simulation |
 
 ---
 
@@ -1076,7 +1185,7 @@ Log files: `./logs/`
 ### Start Trading (Docker)
 
 ```bash
-# 1. Start infrastructure
+# 1. Start infrastructure (entrypoint auto-runs migrations)
 docker-compose up -d
 
 # 2. On Windows host, start MT5 bridge
@@ -1084,6 +1193,18 @@ python -m src.execution.mt5_api_bridge
 
 # 3. Check logs
 docker-compose logs -f trading_app
+```
+
+### Start Trading (Local Dev)
+
+```bash
+# 1. Run migrations
+alembic upgrade head
+
+# 2. Start server
+cd src && uvicorn main:app --reload
+
+# 3. Register a user, configure settings via dashboard
 ```
 
 ### Run Backtest
@@ -1094,37 +1215,27 @@ python -m src.backtesting.run_backtest
 
 ### Environment Variables
 
-Copy `.env.example` to `.env` and configure:
+Copy `.env.example` to `.env` and configure. **Infrastructure** settings (used at runtime):
 
 ```env
-# MT5 Configuration
+# Infrastructure (runtime)
+DATABASE_URL=postgresql://trading_user:pass@localhost:5432/trading_db
+REDIS_URL=redis://localhost:6379/0
+JWT_SECRET_KEY=your-secret-key-here
+EA_MODE=true
+
+# MT5 (for bridge mode)
 MT5_LOGIN=12345678
 MT5_PASSWORD=your_password
 MT5_SERVER=Exness-MT5Trial
 
-# Risk Settings
-MAX_RISK_PER_TRADE=0.01
-ENABLE_MANUAL_OVERRIDE=false
-
-# Telegram Notifications (NEW)
-TELEGRAM_ENABLED=true
+# Telegram bot token (secret, stays in env)
 TELEGRAM_BOT_TOKEN=123456789:ABCdefGHIjklMNOpqrsTUVwxyz
-TELEGRAM_CHAT_ID=-1001234567890
-NOTIFY_ON_TRADE_OPEN=true
-NOTIFY_ON_TRADE_CLOSE=true
-NOTIFY_ON_SIGNAL_GENERATED=true
-NOTIFY_ON_DAILY_SUMMARY=true
 ```
 
-### Set Up Telegram Bot
-
-1. Create a bot via [@BotFather](https://t.me/botfather)
-2. Get the bot token
-3. Create a group/channel and add the bot
-4. Get the chat ID (use [@userinfobot](https://t.me/userinfobot))
-5. Configure in `.env`
+**Trading** settings in `.env` are seed defaults for new users. Once registered, users configure their own risk rules, strategy params, and notifications via `PATCH /api/settings` or the dashboard settings modal.
 
 ---
 
-*Document generated for Aegis Trader v1.1.0*
-*Last updated: February 2026*
+*Document generated for Aegis Trader v4.0.0*
+*Last updated: March 2026*

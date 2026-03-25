@@ -6,7 +6,7 @@ Centralized notification system for the trading automation platform.
 Currently supports Telegram notifications with rich formatting.
 
 Usage:
-    from src.notifications import NotificationService
+    from notifications import NotificationService
     
     # Get singleton instance
     notifier = NotificationService.get_instance()
@@ -26,9 +26,9 @@ Usage:
     await notifier.notify_system_status("started", {"version": "1.0.0", "balance": 10000})
 """
 
-from src.notifications.telegram import TelegramNotifier
-from src.notifications.service import NotificationService
-from src.notifications.message_formatter import MessageFormatter
+from notifications.telegram import TelegramNotifier
+from notifications.service import NotificationService
+from notifications.message_formatter import MessageFormatter
 
 __all__ = [
     "TelegramNotifier",

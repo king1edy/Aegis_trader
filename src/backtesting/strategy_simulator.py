@@ -11,11 +11,11 @@ from typing import Optional, Dict, Any
 from dataclasses import dataclass
 from enum import Enum
 
-from src.strategies.base_strategy import TradingSignal
-from src.strategies.indicators import IndicatorConfig
-from src.execution.mt5_connector import OrderDirection
-from src.backtesting.data_provider import BacktestDataProvider, MultiTimeframeBar
-from src.core.logging_config import get_logger
+from strategies.base_strategy import TradingSignal
+from strategies.indicators import IndicatorConfig
+from execution.mt5_connector import OrderDirection
+from backtesting.data_provider import BacktestDataProvider, MultiTimeframeBar
+from core.logging_config import get_logger
 
 logger = get_logger("strategy_simulator")
 

@@ -2,10 +2,17 @@
 Configuration Management
 ========================
 Centralized settings management using Pydantic Settings.
-All configuration is loaded from environment variables with validation.
+
+**Infrastructure** settings (DB, Redis, JWT, EA mode) are loaded from
+environment variables and remain the runtime source of truth.
+
+**Trading** settings (risk rules, strategy params, notifications) exist
+here as *seed defaults* for new users.  At runtime they are loaded from
+the ``user_settings`` DB table via ``settings.loader.get_trading_config``.
 """
 
 from functools import lru_cache
+from pathlib import Path
 from typing import List, Optional
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -35,7 +42,7 @@ class Settings(BaseSettings):
     """
     
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=Path(__file__).resolve().parents[2] / ".env",
         env_file_encoding="utf-8",
         case_sensitive=False,
         extra="ignore"
@@ -84,10 +91,11 @@ class Settings(BaseSettings):
     use_mt5: bool = Field(default=False, description="Force using real MT5 connector instead of demo")
     
     # -------------------------------------------------------------------------
-    # Trading Parameters
+    # Trading Parameters  (seed defaults — runtime values come from DB)
+    # See: settings.loader.get_trading_config()
     # -------------------------------------------------------------------------
     default_symbol: str = "XAUUSD"
-    
+
     # Risk Management
     max_risk_per_trade: float = Field(
         default=0.01,
@@ -133,7 +141,7 @@ class Settings(BaseSettings):
     trade_sessions: str = "london,newyork"
 
     # -------------------------------------------------------------------------
-    # MTFTR Strategy Configuration
+    # MTFTR Strategy Configuration  (seed defaults — runtime from DB strategy_params JSONB)
     # -------------------------------------------------------------------------
     # Strategy enable/disable
     mtftr_enabled: bool = True
@@ -196,7 +204,7 @@ class Settings(BaseSettings):
     redis_url: Optional[str] = None
     
     # -------------------------------------------------------------------------
-    # Telegram Notifications
+    # Telegram Notifications  (seed defaults — per-user prefs in DB)
     # -------------------------------------------------------------------------
     telegram_bot_token: str = ""
     telegram_chat_id: str = ""
@@ -215,6 +223,25 @@ class Settings(BaseSettings):
     api_port: int = 8000
     api_secret_key: str = "change-this-in-production"
     tradingview_webhook_secret: str = ""
+
+    # -------------------------------------------------------------------------
+    # Authentication / JWT
+    # -------------------------------------------------------------------------
+    jwt_secret_key: str = Field(
+        default="change-me-in-production-use-openssl-rand-hex-32",
+        description="Secret key for JWT token signing",
+    )
+    jwt_algorithm: str = "HS256"
+    jwt_access_token_expire_minutes: int = Field(
+        default=1440,
+        description="JWT token lifetime in minutes (default 24h)",
+    )
+
+    # Multi-tenancy — used by JournalPoller in self-hosted mode
+    default_tenant_id: Optional[str] = Field(
+        default=None,
+        description="Default tenant UUID for JournalPoller. If unset, poller is skipped.",
+    )
     
     # -------------------------------------------------------------------------
     # Monitoring
@@ -223,6 +250,20 @@ class Settings(BaseSettings):
     grafana_password: str = "admin"
     enable_metrics: bool = True
     metrics_port: int = 9100
+
+    # -------------------------------------------------------------------------
+    # OpenTelemetry / SigNoz
+    # -------------------------------------------------------------------------
+    otel_exporter_otlp_endpoint: str = Field(
+        default="http://localhost:4318",
+        description="OTLP HTTP endpoint for SigNoz",
+    )
+    otel_exporter_otlp_protocol: str = "http/protobuf"
+    otel_service_name: str = "aegis-trading"
+    otel_resource_attributes: str = "deployment.environment=development"
+    otel_logs_enabled: bool = False
+    otel_traces_enabled: bool = False
+    otel_metrics_enabled: bool = False
     
     # -------------------------------------------------------------------------
     # Behavioral Safeguards
@@ -283,8 +324,9 @@ class Settings(BaseSettings):
         """Get the database URL, constructing it if not provided."""
         if self.database_url:
             return self.database_url
+        from urllib.parse import quote_plus
         return (
-            f"postgresql://{self.postgres_user}:{self.postgres_password}"
+            f"postgresql://{quote_plus(self.postgres_user)}:{quote_plus(self.postgres_password)}"
             f"@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
         )
     

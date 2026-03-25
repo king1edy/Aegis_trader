@@ -11,9 +11,9 @@ from typing import Dict, List, Optional, Tuple, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
-from src.data.historical_loader import HistoricalDataLoader
-from src.strategies.indicators import IndicatorCalculator, IndicatorConfig
-from src.core.logging_config import get_logger
+from data.historical_loader import HistoricalDataLoader
+from strategies.indicators import IndicatorCalculator, IndicatorConfig
+from core.logging_config import get_logger
 
 logger = get_logger("backtest_data")
 
@@ -122,7 +122,7 @@ class BacktestDataProvider:
             # Option 1: Use synthetic data
             if self.use_synthetic:
                 logger.info("Generating synthetic data...")
-                from src.backtesting.test_data_generator import TestDataGenerator
+                from backtesting.test_data_generator import TestDataGenerator
                 generator = TestDataGenerator(
                     symbol=self.symbol,
                     start_date=self.start_date - timedelta(days=365),  # Extra year for warmup
@@ -155,7 +155,7 @@ class BacktestDataProvider:
                     
                     if valid_prices.sum() < len(self._df_m1) * 0.5:
                         logger.warning("Data quality issue detected, falling back to synthetic data")
-                        from src.backtesting.test_data_generator import TestDataGenerator
+                        from backtesting.test_data_generator import TestDataGenerator
                         generator = TestDataGenerator(
                             symbol=self.symbol,
                             start_date=self.start_date - timedelta(days=365),

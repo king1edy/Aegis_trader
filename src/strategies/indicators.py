@@ -16,8 +16,8 @@ import pandas as pd
 from typing import Optional
 from dataclasses import dataclass
 
-from src.core.exceptions import InsufficientDataError, IndicatorCalculationError
-from src.core.logging_config import get_logger
+from core.exceptions import InsufficientDataError, IndicatorCalculationError
+from core.logging_config import get_logger
 
 logger = get_logger("indicators")
 

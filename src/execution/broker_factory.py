@@ -7,8 +7,8 @@ Factory for creating the appropriate broker connector based on environment and c
 import sys
 import structlog
 
-from src.core.config import Settings
-from src.core.exceptions import MT5ConnectionError
+from core.config import Settings
+from core.exceptions import MT5ConnectionError
 
 logger = structlog.get_logger()
 
@@ -64,7 +64,7 @@ async def _create_direct_broker(settings: Settings):
         )
     
     try:
-        from src.execution.mt5_connector import MT5Connector
+        from execution.mt5_connector import MT5Connector
         broker = MT5Connector(
             login=settings.mt5_login,
             password=settings.mt5_password,
@@ -88,7 +88,7 @@ async def _create_bridge_broker(settings: Settings):
             if response.status_code == 200:
                 health = response.json()
                 if health.get("mt5_connected"):
-                    from src.execution.mt5_api_client import MT5APIClient
+                    from execution.mt5_api_client import MT5APIClient
                     broker = MT5APIClient(settings)
                     logger.info("Created MT5 API bridge client", url=settings.mt5_bridge_url)
                     return broker
@@ -113,7 +113,7 @@ async def _create_bridge_broker(settings: Settings):
 
 async def _create_paper_broker(settings: Settings):
     """Create paper trading broker for simulation."""
-    from src.execution.paper_broker import PaperTradingBroker
+    from execution.paper_broker import PaperTradingBroker
     
     broker = PaperTradingBroker(settings)
     logger.info("Created paper trading broker")
@@ -136,7 +136,7 @@ async def _auto_select_broker(settings: Settings):
         try:
             # Check if MT5 module is available
             import MetaTrader5
-            from src.execution.mt5_connector import MT5Connector
+            from execution.mt5_connector import MT5Connector
             
             broker = MT5Connector(
                 login=settings.mt5_login,
@@ -161,7 +161,7 @@ async def _auto_select_broker(settings: Settings):
             if response.status_code == 200:
                 health = response.json()
                 if health.get("mt5_connected"):
-                    from src.execution.mt5_api_client import MT5APIClient
+                    from execution.mt5_api_client import MT5APIClient
                     broker = MT5APIClient(settings)
                     logger.info("Auto-selected: MT5 API bridge client", url=settings.mt5_bridge_url)
                     return broker
@@ -172,7 +172,7 @@ async def _auto_select_broker(settings: Settings):
     
     # Fall back to paper trading
     logger.warning("No live broker available, falling back to paper trading")
-    from src.execution.paper_broker import PaperTradingBroker
+    from execution.paper_broker import PaperTradingBroker
     broker = PaperTradingBroker(settings)
     logger.info("Auto-selected: Paper trading broker")
     return broker

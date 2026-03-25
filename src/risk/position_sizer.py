@@ -8,9 +8,9 @@ Ensures proper risk management by limiting capital at risk.
 from typing import Optional
 from dataclasses import dataclass
 
-from src.execution.mt5_connector import SymbolInfo
-from src.core.logging_config import get_logger
-from src.core.config import Settings
+from execution.mt5_connector import SymbolInfo
+from core.logging_config import get_logger
+from core.config import Settings
 
 logger = get_logger("position_sizer")
 

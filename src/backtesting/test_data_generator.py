@@ -17,7 +17,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
-from src.core.logging_config import get_logger
+from core.logging_config import get_logger
 
 logger = get_logger("test_data_generator")
 

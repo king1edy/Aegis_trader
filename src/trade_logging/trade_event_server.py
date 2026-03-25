@@ -20,7 +20,7 @@ Endpoints (registered on ea_router — included in main app)
 
 Usage in main.py
 ----------------
-  from src.trade_logging.trade_event_server import (
+  from trade_logging.trade_event_server import (
       ea_router, _load_csv_to_memory, _ensure_csv_header
   )
   app.include_router(ea_router)
@@ -36,19 +36,22 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Dict, List, Optional
 
-from fastapi import APIRouter, FastAPI
+from uuid import UUID
+
+from fastapi import APIRouter, Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-from src.core.config import settings
-from src.core.logging_config import get_logger
-from src.database.repository import (
+from auth.dependencies import get_tenant_id, get_tenant_id_from_api_key
+from core.config import settings
+from core.logging_config import get_logger
+from database.repository import (
     get_session,
     init_database,
     TradeRepository,
     SystemRepository,
 )
-from src.database.models import (
+from database.models import (
     Trade,
     TradeStatus,
     TradeOutcome,
@@ -56,7 +59,7 @@ from src.database.models import (
     SignalSource,
     PartialClose,
 )
-from src.notifications import NotificationService
+from notifications import NotificationService
 
 logger = get_logger("trade_event_server")
 
@@ -162,12 +165,12 @@ def _load_csv_to_memory() -> None:
 # Database persistence
 # =============================================================================
 
-async def _persist_event(event: TradeEvent) -> None:
+async def _persist_event(event: TradeEvent, tenant_id: UUID) -> None:
     """Write the EA event to PostgreSQL. Errors never block the CSV write."""
     try:
         async with get_session() as session:
-            trade_repo  = TradeRepository(session)
-            system_repo = SystemRepository(session)
+            trade_repo  = TradeRepository(session, tenant_id)
+            system_repo = SystemRepository(session, tenant_id)
             now = datetime.now(timezone.utc)
 
             if event.event == "OPEN":
@@ -321,15 +324,19 @@ async def health():
 
 
 @ea_router.post("/trade", status_code=201)
-async def receive_trade_event(event: TradeEvent):
-    """Receive a trade event from the EA (InpFastAPIURL endpoint)."""
+async def receive_trade_event(
+    event: TradeEvent,
+    tenant_id: UUID = Depends(get_tenant_id_from_api_key),
+):
+    """Receive a trade event from the EA (authenticated via X-API-Key header)."""
     row = event.model_dump()
     row["received_at"] = datetime.now(timezone.utc).isoformat()
+    row["tenant_id"] = str(tenant_id)
 
-    _append_to_csv(row)           # 1. CSV — always first, never raises
-    _events_store.append(row)     # 2. In-memory store
-    await _persist_event(event)   # 3. PostgreSQL
-    await _notify_event(event)    # 4. Telegram
+    _append_to_csv(row)                      # 1. CSV — always first, never raises
+    _events_store.append(row)                # 2. In-memory store
+    await _persist_event(event, tenant_id)   # 3. PostgreSQL
+    await _notify_event(event)               # 4. Telegram
 
     exit_str = f"{event.exit_price:.2f}" if event.exit_price else "0.00"
     logger.info(
@@ -348,14 +355,16 @@ async def receive_trade_event(event: TradeEvent):
 
 @ea_router.get("/trades")
 def get_trades(
+    tenant_id: UUID = Depends(get_tenant_id),
     ticket:    Optional[int] = None,
     event:     Optional[str] = None,
     direction: Optional[str] = None,
     outcome:   Optional[str] = None,
     limit:     int           = 200,
 ):
-    """Return trade events newest-first with optional filters."""
-    result = list(reversed(_events_store))
+    """Return trade events newest-first with optional filters (tenant-scoped)."""
+    tid = str(tenant_id)
+    result = [e for e in reversed(_events_store) if e.get("tenant_id") == tid]
     if ticket    is not None:
         result = [e for e in result if str(e.get("ticket")) == str(ticket)]
     if event     is not None:
@@ -368,13 +377,14 @@ def get_trades(
 
 
 @ea_router.get("/trades/summary")
-def get_summary():
+def get_summary(tenant_id: UUID = Depends(get_tenant_id)):
     """Win rate, P&L, and breakdowns by method / session / direction."""
+    tid = str(tenant_id)
     closed = [
         e for e in _events_store
         if e.get("event") in (
             "SL_HIT", "TP1_HIT", "TP2_HIT", "TIME_EXIT", "TRAIL_EXIT"
-        )
+        ) and e.get("tenant_id") == tid
     ]
     if not closed:
         return {"message": "No closed events yet.", "total_events": len(_events_store)}

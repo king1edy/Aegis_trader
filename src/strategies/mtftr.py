@@ -28,14 +28,14 @@ from typing import Optional, List, Dict, Any
 from dataclasses import dataclass
 from enum import Enum
 
-from src.strategies.base_strategy import BaseStrategy, StrategyConfig, TradingSignal
-from src.strategies.indicators import IndicatorCalculator, IndicatorConfig
-from src.strategies.data_manager import MultiTimeframeDataManager
-from src.strategies.filters.session_filter import SessionFilter
-from src.strategies.patterns import PatternRecognizer
-from src.execution.mt5_connector import BrokerInterface, OrderDirection
-from src.core.exceptions import InsufficientDataError, MarketDataError
-from src.core.logging_config import get_logger
+from strategies.base_strategy import BaseStrategy, StrategyConfig, TradingSignal
+from strategies.indicators import IndicatorCalculator, IndicatorConfig
+from strategies.data_manager import MultiTimeframeDataManager
+from strategies.filters.session_filter import SessionFilter
+from strategies.patterns import PatternRecognizer
+from execution.mt5_connector import BrokerInterface, OrderDirection
+from core.exceptions import InsufficientDataError, MarketDataError
+from core.logging_config import get_logger
 
 logger = get_logger("mtftr")
 

@@ -5,7 +5,7 @@ FastAPI APIRouter exposing journal REST endpoints and the dashboard UI.
 
 Mount this router onto the main FastAPI app in main.py:
 
-    from src.journal.router import journal_router
+    from journal.router import journal_router
     app.include_router(journal_router)
 
 Routes
@@ -33,14 +33,15 @@ import logging
 from typing import Optional
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 from sqlalchemy import select
 
-from src.database.models import SetupTag, Trade
-from src.database.repository import get_session
-from src.journal import analyzer
+from auth.dependencies import get_tenant_id
+from database.models import SetupTag, Trade
+from database.repository import get_session
+from journal import analyzer
 
 logger = logging.getLogger("journal.router")
 
@@ -67,13 +68,14 @@ class NewTag(BaseModel):
 # =============================================================================
 
 @journal_router.get("/api/journal/stats")
-async def get_stats():
+async def get_stats(tenant_id: UUID = Depends(get_tenant_id)):
     """Overall trading statistics across all closed trades."""
-    return await analyzer.summary_stats()
+    return await analyzer.summary_stats(tenant_id)
 
 
 @journal_router.get("/api/journal/trades")
 async def get_trades(
+    tenant_id: UUID = Depends(get_tenant_id),
     page:      int = Query(1, ge=1),
     per_page:  int = Query(50, ge=1, le=500),
     symbol:    Optional[str] = None,
@@ -85,6 +87,7 @@ async def get_trades(
 ):
     """Paginated, filterable list of all trades."""
     return await analyzer.list_trades(
+        tenant_id=tenant_id,
         page=page,
         per_page=per_page,
         symbol=symbol,
@@ -97,19 +100,25 @@ async def get_trades(
 
 
 @journal_router.get("/api/journal/trades/open")
-async def get_open_trades():
+async def get_open_trades(tenant_id: UUID = Depends(get_tenant_id)):
     """All currently open (and partially-closed) positions."""
-    return await analyzer.open_trades()
+    return await analyzer.open_trades(tenant_id)
 
 
 @journal_router.patch("/api/journal/trades/{trade_id}")
-async def annotate_trade(trade_id: UUID, body: TradeAnnotation):
+async def annotate_trade(
+    trade_id: UUID,
+    body: TradeAnnotation,
+    tenant_id: UUID = Depends(get_tenant_id),
+):
     """
     Update setup_tag and/or journal_notes on a trade.
     Called inline from the dashboard table rows.
     """
     async with get_session() as session:
-        result = await session.execute(select(Trade).where(Trade.id == trade_id))
+        result = await session.execute(
+            select(Trade).where(Trade.id == trade_id, Trade.tenant_id == tenant_id)
+        )
         trade = result.scalar_one_or_none()
         if trade is None:
             raise HTTPException(status_code=404, detail="Trade not found")
@@ -126,66 +135,78 @@ async def annotate_trade(trade_id: UUID, body: TradeAnnotation):
 
 @journal_router.get("/api/journal/deals")
 async def get_deals(
+    tenant_id: UUID = Depends(get_tenant_id),
     page:     int = Query(1, ge=1),
     per_page: int = Query(100, ge=1, le=1000),
 ):
     """Raw MT5 deal audit log."""
-    return await analyzer.list_deals(page=page, per_page=per_page)
+    return await analyzer.list_deals(tenant_id, page=page, per_page=per_page)
 
 
 # ── Analysis endpoints ────────────────────────────────────────────────────────
 
 @journal_router.get("/api/journal/analysis/sessions")
-async def analysis_sessions():
-    return await analyzer.by_session()
+async def analysis_sessions(tenant_id: UUID = Depends(get_tenant_id)):
+    return await analyzer.by_session(tenant_id)
 
 
 @journal_router.get("/api/journal/analysis/hours")
-async def analysis_hours():
-    return await analyzer.by_hour()
+async def analysis_hours(tenant_id: UUID = Depends(get_tenant_id)):
+    return await analyzer.by_hour(tenant_id)
 
 
 @journal_router.get("/api/journal/analysis/days")
-async def analysis_days():
-    return await analyzer.by_day_of_week()
+async def analysis_days(tenant_id: UUID = Depends(get_tenant_id)):
+    return await analyzer.by_day_of_week(tenant_id)
 
 
 @journal_router.get("/api/journal/analysis/setups")
-async def analysis_setups():
-    return await analyzer.by_setup_tag()
+async def analysis_setups(tenant_id: UUID = Depends(get_tenant_id)):
+    return await analyzer.by_setup_tag(tenant_id)
 
 
 @journal_router.get("/api/journal/analysis/symbols")
-async def analysis_symbols():
-    return await analyzer.by_symbol()
+async def analysis_symbols(tenant_id: UUID = Depends(get_tenant_id)):
+    return await analyzer.by_symbol(tenant_id)
 
 
 @journal_router.get("/api/journal/analysis/direction")
-async def analysis_direction():
-    return await analyzer.by_direction()
+async def analysis_direction(tenant_id: UUID = Depends(get_tenant_id)):
+    return await analyzer.by_direction(tenant_id)
 
 
 @journal_router.get("/api/journal/equity")
-async def get_equity_curve(limit: int = Query(500, ge=10, le=5000)):
-    return await analyzer.equity_curve(limit=limit)
+async def get_equity_curve(
+    tenant_id: UUID = Depends(get_tenant_id),
+    limit: int = Query(500, ge=10, le=5000),
+):
+    return await analyzer.equity_curve(tenant_id, limit=limit)
 
 
 # ── Setup tag endpoints ───────────────────────────────────────────────────────
 
 @journal_router.get("/api/journal/tags")
-async def get_tags():
-    return await analyzer.get_tags()
+async def get_tags(tenant_id: UUID = Depends(get_tenant_id)):
+    return await analyzer.get_tags(tenant_id)
 
 
 @journal_router.post("/api/journal/tags", status_code=201)
-async def create_tag(body: NewTag):
+async def create_tag(
+    body: NewTag,
+    tenant_id: UUID = Depends(get_tenant_id),
+):
     async with get_session() as session:
         existing = await session.execute(
-            select(SetupTag).where(SetupTag.name == body.name)
+            select(SetupTag).where(
+                SetupTag.name == body.name, SetupTag.tenant_id == tenant_id
+            )
         )
         if existing.scalar_one_or_none() is not None:
             raise HTTPException(status_code=409, detail="Tag already exists")
-        tag = SetupTag(name=body.name, color=body.color, description=body.description)
+        tag = SetupTag(
+            name=body.name, color=body.color,
+            description=body.description, tenant_id=tenant_id,
+        )
         session.add(tag)
         await session.commit()
         await session.refresh(tag)
@@ -245,8 +266,82 @@ _DASHBOARD_HTML = r"""<!DOCTYPE html>
     <span id="hdr-open"    class="text-slate-400">Open: —</span>
     <span id="hdr-today"   class="text-slate-400">Today: —</span>
     <button class="btn btn-ghost text-xs" onclick="refresh()">↻ Refresh</button>
+    <span id="hdr-tier" class="tag-badge text-xs" style="display:none"></span>
+    <span id="hdr-user" class="text-slate-400 text-xs"></span>
+    <button id="btn-settings" class="btn btn-ghost text-xs" onclick="openSettings()" style="display:none">Settings</button>
+    <button id="btn-logout" class="btn btn-ghost text-xs" onclick="logout()" style="display:none">Logout</button>
   </div>
 </header>
+
+<!-- ── Auth Modal ────────────────────────────────────────────────────────── -->
+<div id="auth-modal" class="fixed inset-0 bg-black/80 z-[100] flex items-center justify-center" style="display:none">
+  <div class="card p-8 w-96">
+    <h2 class="text-xl font-bold mb-1 text-blue-400">⚡ AEGIS</h2>
+    <p class="text-sm text-slate-400 mb-6">Trade Journal</p>
+    <div id="auth-error" class="text-red-400 text-sm mb-3" style="display:none"></div>
+    <!-- Login form -->
+    <div id="login-form">
+      <input id="login-email" type="text" placeholder="Email or username" class="w-full mb-3 p-2" />
+      <input id="login-pass" type="password" placeholder="Password" class="w-full mb-4 p-2" />
+      <button class="btn btn-primary w-full mb-3" onclick="doLogin()">Sign In</button>
+      <p class="text-xs text-slate-400 text-center">No account? <a href="#" class="text-blue-400" onclick="showRegister();return false">Register</a></p>
+    </div>
+    <!-- Register form -->
+    <div id="register-form" style="display:none">
+      <input id="reg-email" type="text" placeholder="Email" class="w-full mb-3 p-2" />
+      <input id="reg-user" type="text" placeholder="Username" class="w-full mb-3 p-2" />
+      <input id="reg-pass" type="password" placeholder="Password (min 8 chars)" class="w-full mb-4 p-2" />
+      <button class="btn btn-primary w-full mb-3" onclick="doRegister()">Create Account</button>
+      <p class="text-xs text-slate-400 text-center">Have an account? <a href="#" class="text-blue-400" onclick="showLogin();return false">Sign In</a></p>
+    </div>
+  </div>
+</div>
+
+<!-- ── Settings Modal ───────────────────────────────────────────────────── -->
+<div id="settings-modal" class="fixed inset-0 bg-black/80 z-[100] flex items-center justify-center" style="display:none">
+  <div class="card p-6 w-[32rem] max-h-[80vh] overflow-y-auto">
+    <div class="flex justify-between items-center mb-4">
+      <h2 class="text-lg font-bold text-blue-400">Settings</h2>
+      <button class="text-slate-400 hover:text-slate-200 text-xl" onclick="closeSettings()">&times;</button>
+    </div>
+    <div id="settings-error" class="text-red-400 text-sm mb-3" style="display:none"></div>
+
+    <!-- Risk Rules -->
+    <h3 class="text-xs text-slate-400 uppercase tracking-wide mt-4 mb-2">Risk Rules</h3>
+    <div class="grid grid-cols-2 gap-3 text-xs">
+      <div><label class="text-slate-400">Max Daily Drawdown %</label><input id="set-drawdown" type="number" step="0.01" class="w-full mt-1 p-1.5" /></div>
+      <div><label class="text-slate-400">Max Consecutive Losses</label><input id="set-consec" type="number" class="w-full mt-1 p-1.5" /></div>
+      <div><label class="text-slate-400">Max Lot Size</label><input id="set-lot" type="number" step="0.01" class="w-full mt-1 p-1.5" /></div>
+      <div><label class="text-slate-400">Max Open Positions</label><input id="set-positions" type="number" class="w-full mt-1 p-1.5" /></div>
+      <div><label class="text-slate-400">Max Daily Trades</label><input id="set-daily-trades" type="number" class="w-full mt-1 p-1.5" /></div>
+      <div><label class="text-slate-400">Pause on Rule Breach</label><select id="set-pause" class="w-full mt-1 p-1.5"><option value="true">Yes</option><option value="false">No</option></select></div>
+    </div>
+
+    <!-- Notifications -->
+    <h3 class="text-xs text-slate-400 uppercase tracking-wide mt-4 mb-2">Notifications</h3>
+    <div class="grid grid-cols-2 gap-3 text-xs">
+      <div><label class="text-slate-400">Telegram Chat ID</label><input id="set-tg-chat" type="text" class="w-full mt-1 p-1.5" /></div>
+      <div><label class="text-slate-400">Telegram Enabled</label><select id="set-tg-enabled" class="w-full mt-1 p-1.5"><option value="true">Yes</option><option value="false">No</option></select></div>
+    </div>
+    <div class="grid grid-cols-2 gap-2 text-xs mt-2">
+      <label><input id="set-n-open" type="checkbox" class="mr-1" />Trade Open</label>
+      <label><input id="set-n-close" type="checkbox" class="mr-1" />Trade Close</label>
+      <label><input id="set-n-summary" type="checkbox" class="mr-1" />Daily Summary</label>
+      <label><input id="set-n-risk" type="checkbox" class="mr-1" />Risk Breach</label>
+    </div>
+
+    <!-- MT5 Connection -->
+    <h3 class="text-xs text-slate-400 uppercase tracking-wide mt-4 mb-2">MT5 Connection</h3>
+    <div class="grid grid-cols-2 gap-3 text-xs">
+      <div><label class="text-slate-400">MT5 Login</label><input id="set-mt5-login" type="number" class="w-full mt-1 p-1.5" /></div>
+      <div><label class="text-slate-400">MT5 Server</label><input id="set-mt5-server" type="text" class="w-full mt-1 p-1.5" /></div>
+      <div><label class="text-slate-400">Mode</label><select id="set-mt5-mode" class="w-full mt-1 p-1.5"><option value="ea">EA</option><option value="bridge">Bridge</option></select></div>
+    </div>
+
+    <button class="btn btn-primary w-full mt-5" onclick="saveSettings()">Save Settings</button>
+    <div id="settings-saved" class="text-emerald-400 text-xs text-center mt-2" style="display:none">Settings saved</div>
+  </div>
+</div>
 
 <main class="max-w-screen-2xl mx-auto px-4 py-6 space-y-6">
 
@@ -350,9 +445,56 @@ _DASHBOARD_HTML = r"""<!DOCTYPE html>
 
 <script>
 const API = '';  // same origin
+const TOKEN_KEY = 'aegis_token';
 let currentPage = 1;
 let totalPages  = 1;
 let setupTags   = [];
+
+// ── Auth helpers ─────────────────────────────────────────────────────────────
+function getToken()  { return localStorage.getItem(TOKEN_KEY); }
+function setToken(t) { localStorage.setItem(TOKEN_KEY, t); }
+function clearToken(){ localStorage.removeItem(TOKEN_KEY); }
+
+function showAuthModal() { $('auth-modal').style.display = 'flex'; }
+function hideAuthModal() { $('auth-modal').style.display = 'none'; $('auth-error').style.display='none'; }
+function showLogin()    { $('login-form').style.display=''; $('register-form').style.display='none'; }
+function showRegister() { $('login-form').style.display='none'; $('register-form').style.display=''; }
+function authError(msg) { const e=$('auth-error'); e.textContent=msg; e.style.display=''; }
+
+async function doLogin() {
+  const form = new URLSearchParams();
+  form.append('username', $('login-email').value);
+  form.append('password', $('login-pass').value);
+  try {
+    const r = await fetch(API+'/api/auth/login',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:form});
+    if (!r.ok) { const d=await r.json(); authError(d.detail||'Login failed'); return; }
+    const data = await r.json();
+    setToken(data.access_token);
+    hideAuthModal();
+    await initDashboard();
+  } catch(e) { authError('Network error'); }
+}
+
+async function doRegister() {
+  try {
+    const r = await fetch(API+'/api/auth/register',{
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({email:$('reg-email').value, username:$('reg-user').value, password:$('reg-pass').value})
+    });
+    if (!r.ok) { const d=await r.json(); authError(d.detail||'Registration failed'); return; }
+    const data = await r.json();
+    setToken(data.access_token);
+    hideAuthModal();
+    await initDashboard();
+  } catch(e) { authError('Network error'); }
+}
+
+function logout() {
+  clearToken();
+  $('btn-logout').style.display='none';
+  $('hdr-user').textContent='';
+  showAuthModal();
+}
 
 // ── Utility ──────────────────────────────────────────────────────────────────
 const $ = id => document.getElementById(id);
@@ -375,7 +517,11 @@ function outcomeClass(o) {
 }
 
 async function apiFetch(path) {
-  const r = await fetch(API + path);
+  const headers = {};
+  const token = getToken();
+  if (token) headers['Authorization'] = 'Bearer ' + token;
+  const r = await fetch(API + path, {headers});
+  if (r.status === 401) { clearToken(); showAuthModal(); throw new Error('Unauthorized'); }
   if (!r.ok) throw new Error(r.statusText);
   return r.json();
 }
@@ -566,11 +712,14 @@ function changePage(delta) {
 // ── Patch (annotate) a trade ──────────────────────────────────────────────────
 async function patchTrade(id, field, value) {
   try {
-    await fetch(`${API}/api/journal/trades/${id}`, {
-      method:'PATCH',
-      headers:{'Content-Type':'application/json'},
+    const headers = {'Content-Type':'application/json'};
+    const token = getToken();
+    if (token) headers['Authorization'] = 'Bearer ' + token;
+    const r = await fetch(`${API}/api/journal/trades/${id}`, {
+      method:'PATCH', headers,
       body: JSON.stringify({[field]: value}),
     });
+    if (r.status === 401) { clearToken(); showAuthModal(); }
   } catch(e) {
     console.error('Patch failed', e);
   }
@@ -604,12 +753,94 @@ async function refresh() {
 }
 
 // ── Init ──────────────────────────────────────────────────────────────────────
-(async () => {
+async function initDashboard() {
+  // Show user info in header
+  try {
+    const me = await apiFetch('/api/auth/me');
+    window.userProfile = me;
+    $('hdr-user').textContent = me.username || me.email;
+    $('btn-logout').style.display = '';
+    $('btn-settings').style.display = '';
+
+    // Tier badge
+    if (me.subscription) {
+      const tierEl = $('hdr-tier');
+      const t = me.subscription.tier.toUpperCase();
+      tierEl.textContent = t;
+      tierEl.style.display = '';
+      tierEl.style.background = t === 'AUTOPILOT' ? '#1e3a5f' : t === 'PRO' ? '#2d1b4e' : '#1f2937';
+      tierEl.style.color = t === 'AUTOPILOT' ? '#60a5fa' : t === 'PRO' ? '#a78bfa' : '#94a3b8';
+    }
+  } catch(e) { return; } // 401 handled by apiFetch → auth modal shown
+
   await loadTags();
   await populateSymbolFilter();
   await refresh();
-  // Auto-refresh open positions every 30s
   setInterval(loadOpen, 30_000);
+}
+
+// ── Settings modal ─────────────────────────────────────────────────────────
+async function openSettings() {
+  try {
+    const s = await apiFetch('/api/settings');
+    $('set-drawdown').value = s.max_daily_drawdown_pct;
+    $('set-consec').value = s.max_consecutive_losses;
+    $('set-lot').value = s.max_lot_size;
+    $('set-positions').value = s.max_open_positions;
+    $('set-daily-trades').value = s.max_daily_trades;
+    $('set-pause').value = s.pause_on_rule_breach ? 'true' : 'false';
+    $('set-tg-chat').value = s.telegram_chat_id || '';
+    $('set-tg-enabled').value = s.telegram_enabled ? 'true' : 'false';
+    $('set-n-open').checked = s.notify_on_trade_open;
+    $('set-n-close').checked = s.notify_on_trade_close;
+    $('set-n-summary').checked = s.notify_on_daily_summary;
+    $('set-n-risk').checked = s.notify_on_risk_breach;
+    $('set-mt5-login').value = s.mt5_login || '';
+    $('set-mt5-server').value = s.mt5_server || '';
+    $('set-mt5-mode').value = s.mt5_mode;
+    $('settings-saved').style.display = 'none';
+    $('settings-error').style.display = 'none';
+    $('settings-modal').style.display = 'flex';
+  } catch(e) { console.error('Failed to load settings', e); }
+}
+
+function closeSettings() { $('settings-modal').style.display = 'none'; }
+
+async function saveSettings() {
+  const body = {
+    max_daily_drawdown_pct: parseFloat($('set-drawdown').value),
+    max_consecutive_losses: parseInt($('set-consec').value),
+    max_lot_size: parseFloat($('set-lot').value),
+    max_open_positions: parseInt($('set-positions').value),
+    max_daily_trades: parseInt($('set-daily-trades').value),
+    pause_on_rule_breach: $('set-pause').value === 'true',
+    telegram_chat_id: $('set-tg-chat').value || null,
+    telegram_enabled: $('set-tg-enabled').value === 'true',
+    notify_on_trade_open: $('set-n-open').checked,
+    notify_on_trade_close: $('set-n-close').checked,
+    notify_on_daily_summary: $('set-n-summary').checked,
+    notify_on_risk_breach: $('set-n-risk').checked,
+    mt5_login: parseInt($('set-mt5-login').value) || null,
+    mt5_server: $('set-mt5-server').value || null,
+    mt5_mode: $('set-mt5-mode').value,
+  };
+  try {
+    const headers = {'Content-Type':'application/json'};
+    const token = getToken();
+    if (token) headers['Authorization'] = 'Bearer ' + token;
+    const r = await fetch(API + '/api/settings', {method:'PATCH', headers, body:JSON.stringify(body)});
+    if (r.status === 401) { clearToken(); showAuthModal(); return; }
+    if (!r.ok) { const d = await r.json(); const e = $('settings-error'); e.textContent = d.detail||'Save failed'; e.style.display=''; return; }
+    $('settings-saved').style.display = '';
+    setTimeout(() => $('settings-saved').style.display = 'none', 2000);
+  } catch(e) { console.error('Save failed', e); }
+}
+
+(async () => {
+  const token = getToken();
+  if (!token) { showAuthModal(); return; }
+  // Validate existing token
+  await initDashboard();
 })();
 </script>
 </body>

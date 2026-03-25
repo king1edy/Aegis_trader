@@ -1,657 +1,153 @@
 """
-Trading Automation System - Main Entry Point
-=============================================
+Aegis Trading — FastAPI Entry Point
+=====================================
 
-This is the main entry point for the trading automation system.
-It initializes all components and starts the trading loop.
+Start the server:
+
+    Development:  cd src && uvicorn main:app --reload
+    Production:   cd src && uvicorn main:app --host 0.0.0.0 --port 8000
+    Direct:       cd src && python main.py
+
+The MODE is determined by the EA_MODE env variable:
+
+    EA_MODE=true  → passive logging server (EA executes the strategy in MT5)
+    EA_MODE=false → full trading system (Python executes the strategy via MT5 bridge)
 """
 
 import asyncio
 import signal
 import sys
-from datetime import datetime, timezone
-from typing import Optional
+from contextlib import asynccontextmanager
 
-from src.core.config import settings
-from src.core.logging_config import setup_logging, LogMessages, TradingContextLogger
-from src.core.exceptions import TradingSystemError
-from src.database import init_database, close_database, get_session
-from src.database.repository import TradeRepository, SignalRepository, PerformanceRepository, SystemRepository
-from src.notifications import NotificationService
-from src.database.models import Trade, Signal, SignalSource, TradeStatus, OrderType
-from src.execution import create_broker, get_broker_status_message, BrokerInterface
-from src.strategies.data_manager import MultiTimeframeDataManager
-from src.strategies.indicators import IndicatorCalculator
-from src.strategies.filters.session_filter import SessionFilter
-from src.strategies.mtftr import MTFTRStrategy, MTFTRConfig
-from src.strategies.position_manager import PositionManager
-from src.risk.position_sizer import PositionSizer
-from src.risk.risk_checker import RiskChecker
-from src.risk.risk_monitor import RiskMonitor, RiskMonitorConfig, RiskState
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
-# Initialize logging
+from core.config import settings
+from core.logging_config import setup_logging
+from database.repository import init_database
+from trade_logging.trade_event_server import (
+    ea_router,
+    _load_csv_to_memory,
+    _ensure_csv_header,
+)
+from auth.router import auth_router
+from journal.router import journal_router
+from journal.poller import JournalPoller
+from settings.router import settings_router
+from core.rate_limiter import RateLimitMiddleware
+
 logger = setup_logging()
 
 
-class TradingSystem:
-    """
-    Main trading system orchestrator.
-    
-    Coordinates all components: broker connection, strategies,
-    risk management, and execution.
-    """
-    
-    def __init__(self):
-        self.broker: Optional[BrokerInterface] = None
-        self.running = False
-        self._shutdown_event = asyncio.Event()
+# ---------------------------------------------------------------------------
+# Lifespan
+# ---------------------------------------------------------------------------
 
-        # MTFTR Strategy components
-        self.data_manager: Optional[MultiTimeframeDataManager] = None
-        self.indicator_calc: Optional[IndicatorCalculator] = None
-        self.session_filter: Optional[SessionFilter] = None
-        self.strategy: Optional[MTFTRStrategy] = None
-        self.position_manager: Optional[PositionManager] = None
-        self.position_sizer: Optional[PositionSizer] = None
-        self.risk_checker: Optional[RiskChecker] = None
-        
-        # Background risk monitor
-        self.risk_monitor: Optional[RiskMonitor] = None
-        
-        # Notification service
-        self.notifier: Optional[NotificationService] = None
-    
-    @staticmethod
-    def _get_balance(account) -> float:
-        """Get balance from account info, handling both dict and object responses."""
-        if isinstance(account, dict):
-            return float(account["balance"])
-        return float(account.balance)
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Startup / shutdown hook for both EA and trading modes."""
 
-    async def initialize(self) -> None:
-        """Initialize all system components."""
-        logger.info(LogMessages.SYSTEM_STARTED, version="1.0.0", env=settings.app_env.value)
-        
-        # Validate configuration
-        warnings = settings.validate_trading_config()
-        for warning in warnings:
-            logger.warning("Configuration warning", message=warning)
-        
-        # Initialize database
-        logger.info("Initializing database...")
+    # ── Shared startup ─────────────────────────────────────────────────────
+    try:
         await init_database()
-        
-        # Create and connect broker using factory (auto-detects best option)
-        logger.info("Connecting to broker...", mode=settings.broker_mode)
-        self.broker = await create_broker(settings)
-        await self.broker.connect()
-        
-        # Log broker status and account info
-        status_msg = get_broker_status_message(self.broker)
-        logger.info("Broker connected", status=status_msg)
-        
-        account = await self.broker.get_account_info()
-        # Handle both dict (API client) and object (direct connector) responses
-        if isinstance(account, dict):
-            balance = float(account["balance"])
-            equity = float(account["equity"])
-            leverage = account["leverage"]
-            currency = account["currency"]
-        else:
-            balance = float(account.balance)
-            equity = float(account.equity)
-            leverage = account.leverage
-            currency = account.currency
-        
-        logger.info(
-            "Account loaded",
-            balance=balance,
-            equity=equity,
-            leverage=leverage,
-            currency=currency
-        )        
-        # Initialize notification service early so it can be passed to other components
-        self.notifier = NotificationService.get_instance(settings)
-        # Initialize MTFTR strategy components
-        if settings.mtftr_enabled:
-            logger.info("Initializing MTFTR strategy components...")
-
-            async with get_session() as session:
-                trade_repo = TradeRepository(session)
-                perf_repo = PerformanceRepository(session)
-                system_repo = SystemRepository(session)
-
-                # Initialize components
-                self.data_manager = MultiTimeframeDataManager(
-                    broker=self.broker,
-                    cache_ttl_seconds=60
-                )
-
-                self.indicator_calc = IndicatorCalculator()
-
-                self.session_filter = SessionFilter(
-                    london_start=settings.london_session_start,
-                    london_end=settings.london_session_end,
-                    ny_start=settings.ny_session_start,
-                    ny_end=settings.ny_session_end
-                )
-
-                self.position_sizer = PositionSizer(settings)
-                self.risk_checker = RiskChecker(settings, trade_repo, perf_repo, system_repo, self.notifier)
-
-                # MTFTR strategy
-                strategy_config = MTFTRConfig(
-                    name="MTFTR",
-                    symbol=settings.default_symbol,
-                    enabled=True,
-                    max_positions=settings.max_open_positions,
-                    max_daily_trades=settings.max_daily_trades,
-                    risk_per_trade=settings.max_risk_per_trade,
-                    # Indicator periods
-                    ema_200=settings.mtftr_ema_200,
-                    ema_50=settings.mtftr_ema_50,
-                    ema_21=settings.mtftr_ema_21,
-                    hull_55=settings.mtftr_hull_55,
-                    hull_34=settings.mtftr_hull_34,
-                    rsi_period=settings.mtftr_rsi_period,
-                    atr_period=settings.mtftr_atr_period,
-                    swing_lookback=settings.mtftr_swing_lookback,
-                    # Risk parameters
-                    tp1_rr=settings.mtftr_tp1_rr,
-                    tp2_rr=settings.mtftr_tp2_rr,
-                    tp1_close_percent=settings.mtftr_tp1_close_percent,
-                    tp2_close_percent=settings.mtftr_tp2_close_percent,
-                    trail_percent=settings.mtftr_trail_percent,
-                    # Entry filters
-                    min_rsi_long=settings.mtftr_min_rsi_long,
-                    max_rsi_long=settings.mtftr_max_rsi_long,
-                    min_rsi_short=settings.mtftr_min_rsi_short,
-                    max_rsi_short=settings.mtftr_max_rsi_short,
-                    # Stop loss limits
-                    min_sl_atr=settings.mtftr_min_sl_atr,
-                    max_sl_atr=settings.mtftr_max_sl_atr,
-                    sl_buffer_atr=settings.mtftr_sl_buffer_atr,
-                    # Limits
-                    max_trade_duration_hours=settings.mtftr_max_trade_hours
-                )
-
-                self.strategy = MTFTRStrategy(
-                    config=strategy_config,
-                    broker=self.broker,
-                    data_manager=self.data_manager,
-                    indicator_calc=self.indicator_calc,
-                    session_filter=self.session_filter
-                )
-
-                self.position_manager = PositionManager(
-                    broker=self.broker,
-                    data_manager=self.data_manager,
-                    indicator_calc=self.indicator_calc,
-                    config=strategy_config,
-                    notifier=self.notifier
-                )
-
-            logger.info("MTFTR strategy initialized successfully")
-        
-        # Initialize background risk monitor
-        logger.info("Starting background risk monitor...")
-        daily_loss_pct = settings.max_daily_loss_percent * 100  # 0.03 -> 3.0
-        drawdown_pct = settings.max_drawdown_percent * 100      # 0.10 -> 10.0
-        risk_config = RiskMonitorConfig(
-            check_interval_seconds=18.0,
-            max_balance_drawdown_pct=drawdown_pct,
-            max_equity_drawdown_pct=drawdown_pct * 1.5,
-            max_daily_loss_pct=daily_loss_pct,
-            max_weekly_loss_pct=daily_loss_pct * 2,
-            min_margin_level_pct=150.0,
-            emergency_margin_level_pct=100.0
+    except Exception as exc:
+        logger.warning(
+            "Database unavailable at startup — running in CSV-only mode",
+            error=str(exc),
         )
-        
-        self.risk_monitor = RiskMonitor(
-            config=risk_config,
-            broker=self.broker,
-            on_threshold_breach=self._on_risk_breach,
-            on_emergency_close=self._emergency_close_all
-        )
-        await self.risk_monitor.start()
-        
-        # Notify system started
-        if self.notifier.is_enabled:
-            await self.notifier.notify_system_status(
-                "started",
-                {
-                    "version": "1.0.0",
-                    "balance": balance,
-                    "equity": equity,
-                    "broker": settings.broker_mode,
-                    "symbol": settings.default_symbol
-                }
-            )
 
-        logger.info("System initialization complete")
-    
-    async def shutdown(self) -> None:
-        """Gracefully shutdown the system."""
-        logger.info("Initiating shutdown...")
-        self.running = False
-        self._shutdown_event.set()
-        
-        # Notify system stopped
-        if self.notifier and self.notifier.is_enabled:
-            await self.notifier.notify_system_status("stopped")
-        
-        # Disconnect from broker
-        if self.broker:
-            await self.broker.disconnect()
-        
-        # Close database connections
-        await close_database()
-        
-        logger.info(LogMessages.SYSTEM_STOPPED)
-    
-    async def run(self) -> None:
-        """Main trading loop."""
-        self.running = True
-        
-        logger.info("Starting main trading loop...")
-        
-        try:
-            while self.running:
-                try:
-                    # Check broker connection (is_connected is a property, not method)
-                    if not self.broker.is_connected:
-                        logger.warning(LogMessages.CONNECTION_LOST)
-                        if self.notifier and self.notifier.is_enabled:
-                            await self.notifier.notify_system_status("disconnected")
-                        await self.broker.connect()
-                        logger.info(LogMessages.CONNECTION_RESTORED)
-                        if self.notifier and self.notifier.is_enabled:
-                            await self.notifier.notify_system_status("reconnected")
-                    
-                    # Main loop iteration
-                    await self._trading_iteration()
-                    
-                    # Wait before next iteration (configurable)
-                    await asyncio.sleep(1)
-                    
-                except asyncio.CancelledError:
-                    logger.info("Trading loop cancelled")
-                    break
-                except TradingSystemError as e:
-                    logger.error("Trading error", error=str(e), details=e.details)
-                    await asyncio.sleep(5)  # Brief pause before retry
-                except Exception as e:
-                    logger.exception("Unexpected error in trading loop", error=str(e))
-                    await asyncio.sleep(10)  # Longer pause for unexpected errors
-                    
-        finally:
-            await self.shutdown()
-    
-    async def _on_risk_breach(self, reason: str, state: RiskState) -> None:
-        """Handle risk threshold breach."""
-        logger.critical("RISK BREACH", reason=reason)
-        
-        if self.notifier and self.notifier.is_enabled:
-            await self.notifier.notify_system_status(
-                "risk_breach",
-                {
-                    "reason": reason,
-                    "balance_drawdown": f"{state.balance_drawdown_pct:.2f}%",
-                    "daily_loss": f"{state.daily_loss_pct:.2f}%",
-                    "margin_level": f"{state.margin_level:.1f}%"
-                }
-            )
-    
-    async def _emergency_close_all(self, reason: str) -> None:
-        """Emergency close all positions."""
-        logger.critical("EMERGENCY CLOSE ALL", reason=reason)
-        
-        positions = await self.broker.get_positions()
-        for pos in positions:
-            if pos.magic != 123456:
-                continue  # Only close our positions, not the EA's
-            try:
-                await self.broker.close_position(pos.ticket)
-                logger.info("Emergency closed position", ticket=pos.ticket)
-            except Exception as e:
-                logger.error("Failed to close position", ticket=pos.ticket, error=str(e))
-    
-    async def _trading_iteration(self) -> None:
-        """
-        Single iteration of the trading loop.
+    _load_csv_to_memory()
+    _ensure_csv_header()
 
-        Main trading logic:
-        1. Manage existing positions (every tick)
-        2. Look for new signals (only on new 15M bar)
-        3. Validate signals against risk limits
-        4. Execute approved signals
-        """
-        # Check if trading is blocked by risk monitor
-        if self.risk_monitor and self.risk_monitor.is_trading_blocked:
-            logger.warning(
-                "Trading blocked by risk monitor",
-                reason=self.risk_monitor.block_reason
-            )
-            await asyncio.sleep(60)  # Wait longer when blocked
-            return
-        
-        # Get current account state
-        account = await self.broker.get_account_info()
+    # Start MT5 journal poller (background task)
+    poller = JournalPoller()
+    poller_task = asyncio.create_task(poller.run())
 
-        # PHASE 1: Manage existing positions (every tick)
-        if self.position_manager:
-            await self.position_manager.manage_positions()
+    # ── Mode-specific startup ──────────────────────────────────────────────
+    trading_task = None
 
-        # PHASE 2: Look for new signals (only on new 15M bar)
-        if not self.strategy or not self.data_manager:
-            await asyncio.sleep(1)
-            return
-
-        # Check for new M1 bar
-        if not await self.data_manager.is_new_bar(settings.default_symbol, "M1"):
-            await asyncio.sleep(1)
-            return
-
-        async with get_session() as session:
-            trade_repo = TradeRepository(session)
-            signal_repo = SignalRepository(session)
-
-            # Check if we have room for more positions
-            open_trades = await trade_repo.get_open_trades(symbol=settings.default_symbol)
-
-            if len(open_trades) >= self.strategy.config.max_positions:
-                logger.debug(
-                    "Max positions reached",
-                    open_positions=len(open_trades),
-                    max_positions=self.strategy.config.max_positions
-                )
-                return
-
-            try:
-                # Generate signal
-                signal = await self.strategy.analyze(settings.default_symbol)
-
-                if not signal:
-                    return
-
-                # Save signal to database
-                db_signal = Signal(
-                    timestamp=signal.timestamp,
-                    symbol=signal.symbol,
-                    strategy_name="MTFTR",
-                    signal_source=SignalSource.HULL_SUITE,
-                    direction=signal.direction.value,
-                    proposed_entry=signal.entry_price,
-                    proposed_sl=signal.stop_loss,
-                    proposed_tp=signal.take_profit_1,
-                    market_context=signal.market_context,
-                    was_executed=False
-                )
-                await signal_repo.save(db_signal)
-
-                logger.info(
-                    "Signal generated",
-                    symbol=signal.symbol,
-                    direction=signal.direction.value,
-                    entry=signal.entry_price,
-                    sl=signal.stop_loss,
-                    tp1=signal.take_profit_1,
-                    tp2=signal.take_profit_2,
-                    reason=signal.reason,
-                    confidence=signal.confidence
-                )
-                
-                # Notify signal generated
-                if self.notifier and self.notifier.is_enabled:
-                    await self.notifier.notify_signal_generated(
-                        symbol=signal.symbol,
-                        direction=signal.direction.value,
-                        entry_price=signal.entry_price,
-                        stop_loss=signal.stop_loss,
-                        take_profit=signal.take_profit_1,
-                        confidence=signal.confidence,
-                        timeframe="M1",
-                        reason=signal.reason or ""
-                    )
-
-                # Check risk limits
-                can_trade, rejection_reason = await self.risk_checker.check_all_limits(signal, account)
-
-                if not can_trade:
-                    logger.info("Signal rejected by risk check", reason=rejection_reason)
-                    # Notify signal rejected
-                    if self.notifier and self.notifier.is_enabled:
-                        await self.notifier.notify_signal_rejected(
-                            symbol=signal.symbol,
-                            direction=signal.direction.value,
-                            reason=rejection_reason or "Unknown"
-                        )
-                    return
-
-                # Calculate position size
-                symbol_info = await self.broker.get_symbol_info(signal.symbol)
-                lot_size = await self.position_sizer.calculate_lot_size(
-                    symbol=signal.symbol,
-                    entry_price=signal.entry_price,
-                    stop_loss=signal.stop_loss,
-                    account_balance=self._get_balance(account),
-                    risk_percent=settings.max_risk_per_trade,
-                    symbol_info=symbol_info
-                )
-
-                # Execute trade
-                await self._execute_signal(signal, lot_size, trade_repo, signal_repo, db_signal)
-
-            except Exception as e:
-                logger.exception("Error in strategy analysis", error=str(e))
-
-        await asyncio.sleep(1)
-
-    async def _execute_signal(
-        self,
-        signal,
-        lot_size: float,
-        trade_repo: TradeRepository,
-        signal_repo: SignalRepository,
-        db_signal: Signal
-    ) -> None:
-        """Execute a trading signal."""
-
-        with TradingContextLogger(symbol=signal.symbol, strategy="MTFTR"):
-            try:
-                result = await self.broker.open_position(
-                    symbol=signal.symbol,
-                    direction=signal.direction,
-                    volume=lot_size,
-                    sl=signal.stop_loss,
-                    tp=None,  # We manage TPs manually
-                    comment="MTFTR",
-                    magic=123456
-                )
-
-                if result.success:
-                    # Create trade record
-                    trade = Trade(
-                        ticket=result.ticket,
-                        symbol=signal.symbol,
-                        order_type=OrderType.BUY if signal.direction.value == "BUY" else OrderType.SELL,
-                        status=TradeStatus.OPEN,
-                        signal_source=SignalSource.HULL_SUITE,
-                        strategy_name="MTFTR",
-                        signal_time=signal.timestamp,
-                        entry_price=result.price,
-                        entry_time=datetime.now(timezone.utc),
-                        lot_size=lot_size,
-                        initial_lot_size=lot_size,
-                        stop_loss=signal.stop_loss,
-                        take_profit_1=signal.take_profit_1,
-                        take_profit_2=signal.take_profit_2,
-                        take_profit_final=signal.take_profit_final,
-                        position_state="initial",
-                        account_balance_before=self._get_balance(await self.broker.get_account_info()),
-                        market_context=signal.market_context,
-                        strategy_data=signal.strategy_data
-                    )
-
-                    await trade_repo.create(trade)
-
-                    # Mark signal as executed
-                    db_signal.was_executed = True
-                    db_signal.execution_price = result.price
-                    db_signal.execution_time = datetime.now(timezone.utc)
-                    await signal_repo.save(db_signal)
-
-                    logger.info(
-                        "Trade opened successfully",
-                        ticket=result.ticket,
-                        direction=signal.direction.value,
-                        entry=result.price,
-                        sl=signal.stop_loss,
-                        lot_size=lot_size
-                    )
-                    
-                    # Notify trade opened
-                    if self.notifier and self.notifier.is_enabled:
-                        await self.notifier.notify_trade_opened(
-                            symbol=signal.symbol,
-                            direction=signal.direction.value,
-                            entry_price=result.price,
-                            stop_loss=signal.stop_loss,
-                            take_profit_1=signal.take_profit_1,
-                            take_profit_2=signal.take_profit_2,
-                            lot_size=lot_size,
-                            confidence=signal.confidence,
-                            reason=signal.reason or ""
-                        )
-                else:
-                    logger.error("Trade rejected by broker", reason=result.error_message)
-
-            except Exception as e:
-                logger.exception("Failed to execute signal", error=str(e))
-
-
-async def main() -> None:
-    """
-    Main entry point.
-
-    EA_MODE=true  → passive logging server (EA executes the strategy).
-    EA_MODE=false → full trading system (this process executes the strategy).
-    """
     if settings.ea_mode:
-        # ── EA + Journal Mode ──────────────────────────────────────────────────
-        # ONE FastAPI app on ONE port (ea_log_server_port, default 8000).
-        #
-        # Routes composed from two routers:
-        #   ea_router      → POST /trade  GET /trades  GET /trades/summary  GET /health
-        #   journal_router → GET /        GET /api/journal/*
-        #
-        # MT5 poller starts as an asyncio background task so that manual
-        # trades opened directly on the broker are also journaled.
-        import uvicorn
-        from contextlib import asynccontextmanager
-        from fastapi import FastAPI
-        from fastapi.middleware.cors import CORSMiddleware
-
-        from src.trade_logging.trade_event_server import (
-            ea_router,
-            _load_csv_to_memory,
-            _ensure_csv_header,
-        )
-        from src.journal.router import journal_router
-        from src.journal.poller import JournalPoller
-        from src.database.repository import init_database
-
-        @asynccontextmanager
-        async def lifespan(app: FastAPI):
-            # 1. Ensure DB tables exist (safe to call repeatedly)
-            try:
-                await init_database()
-            except Exception as exc:
-                logger.warning(
-                    "Database unavailable at startup — running in CSV-only mode",
-                    error=str(exc),
-                )
-            # 2. Seed the in-memory CSV store (existing EA behaviour)
-            _load_csv_to_memory()
-            _ensure_csv_header()
-            # 3. Start the MT5 poller as a background task
-            poller = JournalPoller()
-            poller_task = asyncio.create_task(poller.run())
-            logger.info(
-                "Trade journal started",
-                host    = settings.ea_log_server_host,
-                port    = settings.ea_log_server_port,
-                poll_s  = settings.journal_poll_interval_seconds,
-            )
-            yield
-            # 4. Graceful shutdown — cancel the poller task
-            poller_task.cancel()
-            try:
-                await poller_task
-            except asyncio.CancelledError:
-                pass
-
-        unified_app = FastAPI(
-            title       = "Aegis Trade Journal",
-            description = (
-                "EA event receiver (POST /trade) + "
-                "manual trade journal + pattern dashboard (GET /)"
-            ),
-            version     = "4.0.0",
-            lifespan    = lifespan,
-        )
-        unified_app.add_middleware(
-            CORSMiddleware,
-            allow_origins  = ["*"],
-            allow_methods  = ["*"],
-            allow_headers  = ["*"],
-        )
-        # EA webhook routes: /trade  /trades  /trades/summary  /health
-        unified_app.include_router(ea_router)
-        # Journal routes: /  /api/journal/*
-        unified_app.include_router(journal_router)
-
         logger.info(
-            "Starting unified EA + Journal server",
-            host = settings.ea_log_server_host,
-            port = settings.ea_log_server_port,
+            "EA mode — receiving events from MT5 EA",
+            host=settings.ea_log_server_host,
+            port=settings.ea_log_server_port,
+            poll_s=settings.journal_poll_interval_seconds,
         )
-
-        config = uvicorn.Config(
-            unified_app,
-            host      = settings.ea_log_server_host,
-            port      = settings.ea_log_server_port,
-            log_level = "warning",
-        )
-        await uvicorn.Server(config).serve()
-
     else:
-        # ── Direct Trading Mode ────────────────────────────────────────────────
-        # This process connects to the broker and executes the strategy itself.
+        from trading_system import TradingSystem
+
         system = TradingSystem()
 
-        if sys.platform != "win32":
-            loop = asyncio.get_event_loop()
+        async def _run_trading_system():
+            try:
+                await system.initialize()
+                await system.run()
+            except Exception as e:
+                logger.exception("Trading system error", error=str(e))
 
-            def _signal_handler(sig):
-                logger.info(f"Received signal {sig.name}")
-                asyncio.create_task(system.shutdown())
+        trading_task = asyncio.create_task(_run_trading_system())
+        logger.info("Trading mode — strategy running as background task")
 
-            for sig in (signal.SIGTERM, signal.SIGINT):
-                loop.add_signal_handler(sig, lambda s=sig: _signal_handler(s))
+    yield
 
+    # ── Shutdown ───────────────────────────────────────────────────────────
+    if trading_task and not trading_task.done():
+        trading_task.cancel()
         try:
-            await system.initialize()
-            await system.run()
-        except KeyboardInterrupt:
-            logger.info("Keyboard interrupt received")
-        except Exception as e:
-            logger.exception("Fatal error", error=str(e))
-            sys.exit(1)
-        finally:
-            await system.shutdown()
+            await trading_task
+        except asyncio.CancelledError:
+            pass
+
+    poller_task.cancel()
+    try:
+        await poller_task
+    except asyncio.CancelledError:
+        pass
 
 
+# ---------------------------------------------------------------------------
+# FastAPI application
+# ---------------------------------------------------------------------------
+
+app = FastAPI(
+    title="Aegis Trading",
+    description=(
+        "EA event receiver (POST /trade) · "
+        "trade journal + dashboard (GET /) · "
+        "strategy engine (EA_MODE=false)"
+    ),
+    version="4.0.0",
+    lifespan=lifespan,
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+app.add_middleware(RateLimitMiddleware)
+
+# Auth routes:        POST /api/auth/register  POST /api/auth/login  GET /api/auth/me  API key CRUD
+app.include_router(auth_router)
+# EA webhook routes:  POST /trade  GET /trades  GET /trades/summary  GET /health
+app.include_router(ea_router)
+# Journal routes:     GET /  GET /api/journal/*
+app.include_router(journal_router)
+# Settings routes:    GET/PATCH /api/settings  GET /api/settings/subscription  GET /api/settings/rate-limits
+app.include_router(settings_router)
+
+
+# ---------------------------------------------------------------------------
+# CLI entry point:  python main.py
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    import uvicorn
+
+    uvicorn.run(
+        "main:app",
+        host=settings.ea_log_server_host,
+        port=settings.ea_log_server_port,
+        reload=True,
+    )

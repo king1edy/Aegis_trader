@@ -155,7 +155,7 @@ class MT5Reader:
             )
             return False
 
-        from src.core.config import get_settings
+        from core.config import get_settings
         s = get_settings()
 
         kwargs: dict = {}

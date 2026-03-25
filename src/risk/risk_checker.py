@@ -15,14 +15,14 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Tuple, Optional, TYPE_CHECKING
 
-from src.strategies.base_strategy import TradingSignal
-from src.execution.mt5_connector import AccountInfo
-from src.database.repository import TradeRepository, PerformanceRepository, SystemRepository
-from src.core.config import Settings
-from src.core.logging_config import get_logger
+from strategies.base_strategy import TradingSignal
+from execution.mt5_connector import AccountInfo
+from database.repository import TradeRepository, PerformanceRepository, SystemRepository
+from core.config import Settings  # also accepts TradingConfig (duck-typed)
+from core.logging_config import get_logger
 
 if TYPE_CHECKING:
-    from src.notifications import NotificationService
+    from notifications import NotificationService
 
 logger = get_logger("risk_checker")
 

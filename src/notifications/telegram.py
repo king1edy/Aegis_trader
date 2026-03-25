@@ -13,9 +13,9 @@ from telegram import Bot
 from telegram.error import TelegramError
 from telegram.constants import ParseMode
 
-from src.core.config import Settings
-from src.core.logging_config import get_logger
-from src.notifications.message_formatter import MessageFormatter
+from core.config import Settings  # also accepts TradingConfig (duck-typed)
+from core.logging_config import get_logger
+from notifications.message_formatter import MessageFormatter
 
 logger = get_logger("telegram_notifier")
 

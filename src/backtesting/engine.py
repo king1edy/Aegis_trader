@@ -21,9 +21,9 @@ from uuid import uuid4
 import pandas as pd
 import numpy as np
 
-from src.core.logging_config import get_logger
-from src.strategies.base_strategy import TradingSignal
-from src.execution.mt5_connector import OrderDirection
+from core.logging_config import get_logger
+from strategies.base_strategy import TradingSignal
+from execution.mt5_connector import OrderDirection
 
 logger = get_logger("backtest_engine")
 

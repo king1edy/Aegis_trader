@@ -15,7 +15,7 @@ from decimal import Decimal
 from typing import Optional
 from uuid import uuid4
 
-from src.database.models import (
+from database.models import (
     JournalDeal,
     PartialClose,
     Trade,
@@ -26,8 +26,8 @@ from src.database.models import (
     SignalSource,
     AccountSnapshot,
 )
-from src.journal.mt5_reader import MT5DealRecord, MT5PositionRecord
-from src.journal.session_tagger import (
+from journal.mt5_reader import MT5DealRecord, MT5PositionRecord
+from journal.session_tagger import (
     compute_rr,
     get_day_of_week,
     get_hour_of_day,

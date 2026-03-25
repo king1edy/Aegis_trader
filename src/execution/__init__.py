@@ -4,7 +4,7 @@ Execution Module
 Order execution and broker connectivity.
 """
 
-from src.execution.mt5_connector import (
+from execution.mt5_connector import (
     BrokerInterface,
     MT5Connector,
     DemoConnector,
@@ -17,9 +17,9 @@ from src.execution.mt5_connector import (
     Tick,
     TradeResult,
 )
-from src.execution.broker_factory import create_broker, get_broker_status_message
-from src.execution.mt5_api_client import MT5APIClient
-from src.execution.paper_broker import PaperTradingBroker
+from execution.broker_factory import create_broker, get_broker_status_message
+from execution.mt5_api_client import MT5APIClient
+from execution.paper_broker import PaperTradingBroker
 
 __all__ = [
     # Core interfaces

@@ -15,9 +15,9 @@ from datetime import datetime, timedelta, timezone
 from typing import Dict, Optional, List
 from dataclasses import dataclass
 
-from src.execution.mt5_connector import BrokerInterface
-from src.core.exceptions import StaleDataError, MarketDataError
-from src.core.logging_config import get_logger
+from execution.mt5_connector import BrokerInterface
+from core.exceptions import StaleDataError, MarketDataError
+from core.logging_config import get_logger
 
 logger = get_logger("data_manager")
 

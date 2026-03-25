@@ -12,7 +12,7 @@ from datetime import datetime, time, timezone
 from typing import Optional, Tuple
 from dataclasses import dataclass
 
-from src.core.logging_config import get_logger
+from core.logging_config import get_logger
 
 logger = get_logger("session_filter")
 

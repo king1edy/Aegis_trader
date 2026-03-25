@@ -8,7 +8,9 @@
       "Bash(python -c \":*)",
       "Bash(curl -s http://127.0.0.1:8000/health)",
       "Bash(curl -s \"http://127.0.0.1:8000/trades/summary\")",
-      "Bash(taskkill //F //IM python.exe)"
+      "Bash(taskkill //F //IM python.exe)",
+      "Bash(timeout 8 uvicorn main:app --host 127.0.0.1 --port 8000)",
+      "Bash(pip install:*)"
     ]
   }
 }

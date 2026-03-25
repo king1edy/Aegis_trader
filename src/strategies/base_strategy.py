@@ -10,8 +10,8 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Dict, List, Optional, Any
 
-from src.execution.mt5_connector import BrokerInterface, OrderDirection
-from src.core.logging_config import get_logger
+from execution.mt5_connector import BrokerInterface, OrderDirection
+from core.logging_config import get_logger
 
 logger = get_logger("base_strategy")
 
