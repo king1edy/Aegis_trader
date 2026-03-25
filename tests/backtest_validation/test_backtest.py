@@ -39,31 +39,25 @@ class TestBacktestEngine:
     # Helper: Create Config
     # ---------------------------
     def _create_config(self):
-        # comment# Step 1: create data provider
         provider = BacktestDataProvider(
             symbol="XAUUSD",
             start_date=datetime(2023, 1, 1, tzinfo=timezone.utc),
             end_date=datetime(2023, 1, 5, tzinfo=timezone.utc),
             use_synthetic=True
         )
-        provider.load_data()  # comment# load/generate historical/synthetic data
-
-        # comment# Step 2: create BacktestConfig with defaults
+        provider.load_data()  
         config = BacktestConfig(
-            initial_balance=10000.0,  # comment# starting capital
-            leverage=100,  # comment# leverage
-            spread_pips=1.5  # comment# spread
+            initial_balance=10000.0,  
+            leverage=100,  
+            spread_pips=1.5 
         )
 
-        # comment# return config and provider for use in tests
         return config, provider
     
     # ---------------------------
     # Helper: Get Data from Provider
     # ---------------------------
     def _get_dataframes(self, provider):
-        """Extract dataframes from the provider"""
-        # Try different ways to get the dataframes
         m15_data = None
         h1_data = None
         h4_data = None
@@ -94,9 +88,9 @@ class TestBacktestEngine:
     # Helper: Create Sample Data
     # ---------------------------
     def _create_sample_data(self):
-        """Create sample data for backtesting"""
         # Create datetime range with correct frequency
         # Use '15min' instead of '15T' for pandas compatibility
+
         dates = pd.date_range(
             start=datetime(2023, 1, 1, tzinfo=timezone.utc),
             end=datetime(2023, 1, 5, tzinfo=timezone.utc),
@@ -135,8 +129,7 @@ class TestBacktestEngine:
     # Helper: Run Backtest
     # ---------------------------
     def _run_backtest(self, config, provider):
-        """Helper method to run the backtest engine properly"""
-        
+
         # Try to get data from provider
         m15_data, h1_data, h4_data = self._get_dataframes(provider)
         
@@ -538,7 +531,7 @@ class TestStrategySimulator:
     # Helper: Create Mock Signal
     # ---------------------------
     def _create_mock_signal(self, symbol, direction, entry_price, stop_loss, take_profit_1, take_profit_2, timestamp):
-        """Create a mock trading signal"""
+        
         class MockSignal:
             def __init__(self):
                 self.symbol = symbol
@@ -553,13 +546,11 @@ class TestStrategySimulator:
         return MockSignal()
     
 class TestTestDataGenerator:
-    """Tests for: src/backtesting/test_data_generator.py"""
     
     # ---------------------------
     # Helper: Create Generator
     # ---------------------------
     def _create_generator(self, start_date=None, end_date=None, base_price=2000.0):
-        """Create a test data generator instance"""
         if start_date is None:
             start_date = datetime(2023, 1, 1, tzinfo=timezone.utc)
         if end_date is None:
@@ -577,7 +568,6 @@ class TestTestDataGenerator:
     # Helper: Calculate Expected Bars
     # ---------------------------
     def _calculate_expected_bars(self, start_date, end_date):
-        """Calculate expected number of M1 bars excluding weekends and market close"""
         current = start_date
         count = 0
         
@@ -599,7 +589,6 @@ class TestTestDataGenerator:
     # Test 1: Generates Requested Number of Bars
     # ---------------------------
     def test_generates_requested_number_of_bars(self):
-        """Test that generator creates the correct number of bars for the date range"""
         start_date = datetime(2023, 1, 1, tzinfo=timezone.utc)  # Sunday
         end_date = datetime(2023, 1, 2, tzinfo=timezone.utc)    # Monday
         generator = self._create_generator(start_date=start_date, end_date=end_date)
@@ -615,7 +604,6 @@ class TestTestDataGenerator:
     # Test 2: Multiple Days Generation
     # ---------------------------
     def test_generates_multiple_days_correctly(self):
-        """Test that generator works for multiple days"""
         start_date = datetime(2023, 1, 2, tzinfo=timezone.utc)  # Monday
         end_date = datetime(2023, 1, 5, tzinfo=timezone.utc)    # Thursday
         generator = self._create_generator(start_date=start_date, end_date=end_date)
@@ -631,7 +619,6 @@ class TestTestDataGenerator:
     # Test 3: High >= Low Always
     # ---------------------------
     def test_high_ge_low_always(self):
-        """Test that high is always >= low in generated data (data quality check)"""
         generator = self._create_generator()
         data = generator.generate()
         
@@ -654,7 +641,6 @@ class TestTestDataGenerator:
     # Test 4: Open and Close Within High-Low Range
     # ---------------------------
     def test_open_and_close_within_high_low_range(self):
-        """Test that open and close prices are within high-low range"""
         generator = self._create_generator()
         data = generator.generate()
         
@@ -672,7 +658,6 @@ class TestTestDataGenerator:
     # Test 5: Price Movement is Reasonable
     # ---------------------------
     def test_price_movement_is_reasonable(self):
-        """Test that price movements are within reasonable bounds (no extreme jumps)"""
         generator = self._create_generator(
             start_date=datetime(2023, 1, 2, tzinfo=timezone.utc),
             end_date=datetime(2023, 1, 5, tzinfo=timezone.utc)
@@ -697,7 +682,6 @@ class TestTestDataGenerator:
     # Test 6: Data Types are Correct
     # ---------------------------
     def test_data_types_are_correct(self):
-        """Test that all columns have correct data types"""
         generator = self._create_generator()
         data = generator.generate()
         
@@ -733,7 +717,6 @@ class TestTestDataGenerator:
     # Test 7: Volume Data Positive
     # ---------------------------
     def test_volume_data_positive(self):
-        """Test that volume data is positive"""
         generator = self._create_generator()
         data = generator.generate()
         
@@ -755,7 +738,6 @@ class TestTestDataGenerator:
     # Test 8: Spread Data Positive
     # ---------------------------
     def test_spread_data_positive(self):
-        """Test that spread data is positive and reasonable"""
         generator = self._create_generator()
         data = generator.generate()
         
@@ -775,7 +757,6 @@ class TestTestDataGenerator:
     # Test 9: Weekend Exclusion
     # ---------------------------
     def test_weekend_exclusion(self):
-        """Test that weekends are excluded from generated data"""
         start_date = datetime(2023, 1, 1, tzinfo=timezone.utc)  # Sunday
         end_date = datetime(2023, 1, 8, tzinfo=timezone.utc)    # Sunday (week later)
         generator = self._create_generator(start_date=start_date, end_date=end_date)
@@ -796,8 +777,7 @@ class TestTestDataGenerator:
     # Test 10: Price Trend Reasonable
     # ---------------------------
     def test_price_trend_reasonable(self):
-        """Test that price trends are reasonable (no extreme drift)"""
-        # Generate 1 month of data to see trend
+        # Generate 1 month of data to see trend#
         start_date = datetime(2023, 1, 2, tzinfo=timezone.utc)  # Monday
         end_date = datetime(2023, 2, 1, tzinfo=timezone.utc)    # Wednesday
         generator = TestDataGenerator(  # Use direct constructor instead of helper
