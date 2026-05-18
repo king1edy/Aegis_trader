@@ -35,6 +35,7 @@ from journal.router import journal_router
 from journal.poller import JournalPoller
 from settings.router import settings_router
 from core.rate_limiter import RateLimitMiddleware
+from webhooks.tv_router import tv_router
 
 logger = setup_logging()
 
@@ -68,12 +69,20 @@ async def lifespan(app: FastAPI):
 
     if settings.ea_mode:
         logger.info(
-            "EA mode — receiving events from MT5 EA",
+            "Webhook mode — receiving events from MT5 EA and TradingView",
             host=settings.ea_log_server_host,
             port=settings.ea_log_server_port,
             poll_s=settings.journal_poll_interval_seconds,
         )
     else:
+        # DEPRECATED: Direct strategy execution via Python + MT5 bridge.
+        # The production ingestion path is POST /webhook/tradingview (or
+        # POST /trade for the EA).  This branch is retained for local
+        # development and backtesting only.
+        logger.warning(
+            "EA_MODE=false — starting deprecated direct-execution mode. "
+            "For production, use EA_MODE=true with TradingView webhooks."
+        )
         from trading_system import TradingSystem
 
         system = TradingSystem()
@@ -112,9 +121,10 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Aegis Trading",
     description=(
+        "TradingView webhook receiver (POST /webhook/tradingview) · "
         "EA event receiver (POST /trade) · "
         "trade journal + dashboard (GET /) · "
-        "strategy engine (EA_MODE=false)"
+        "strategy engine [deprecated] (EA_MODE=false)"
     ),
     version="4.0.0",
     lifespan=lifespan,
@@ -136,6 +146,8 @@ app.include_router(ea_router)
 app.include_router(journal_router)
 # Settings routes:    GET/PATCH /api/settings  GET /api/settings/subscription  GET /api/settings/rate-limits
 app.include_router(settings_router)
+# TradingView webhook: POST /webhook/tradingview
+app.include_router(tv_router)
 
 
 # ---------------------------------------------------------------------------

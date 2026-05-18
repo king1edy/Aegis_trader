@@ -72,6 +72,7 @@ class SignalSource(PyEnum):
     INSTITUTIONAL_FLOW = "INSTITUTIONAL_FLOW"
     MANUAL = "MANUAL"  # Should rarely be used!
     WEBHOOK = "WEBHOOK"
+    TRADINGVIEW = "TRADINGVIEW"
 
 
 # =============================================================================
