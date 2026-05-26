@@ -4,6 +4,12 @@
 >
 > Last Updated: March 2026 (v4.0)
 
+> Documentation hub: [README.md](README.md)
+>
+> Product and usage docs: [PRD.md](PRD.md) | [VISION.md](VISION.md) | [USE_CASES.md](USE_CASES.md) | [FEATURES.md](FEATURES.md) | [GLOSSARY.md](GLOSSARY.md) | [STRATEGY.md](STRATEGY.md) | [RISK_MANAGEMENT.md](RISK_MANAGEMENT.md) | [API_REFERENCE.md](API_REFERENCE.md) | [DATABASE_SCHEMA.md](DATABASE_SCHEMA.md)
+>
+> Last verified against commit: `f7209db`
+
 ---
 
 ## Table of Contents
